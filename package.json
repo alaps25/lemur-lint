@@ -1,0 +1,14 @@
+{
+  "name": "move-it-move-it",
+  "version": "1.0.0",
+  "description": "Figma plugin to detect arbitrary spacing values and replace them with proper design system tokens",
+  "scripts": {
+    "build": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017 && cp src/ui.html dist/ui.html",
+    "watch": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017 --watch & cp src/ui.html dist/ui.html"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.104.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

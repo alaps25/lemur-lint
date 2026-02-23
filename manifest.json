@@ -1,0 +1,10 @@
+{
+  "name": "Move It Move It",
+  "id": "move-it-move-it-figma-plugin",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "documentAccess": "dynamic-page",
+  "editorType": ["figma"],
+  "permissions": ["teamlibrary"]
+}

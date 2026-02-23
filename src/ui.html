@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: var(--figma-color-bg, #ffffff);
+    --bg-secondary: var(--figma-color-bg-secondary, #f5f5f5);
+    --bg-hover: var(--figma-color-bg-hover, #f0f0f0);
+    --text: var(--figma-color-text, #333333);
+    --text-secondary: var(--figma-color-text-secondary, #8c8c8c);
+    --text-tertiary: var(--figma-color-text-tertiary, #b3b3b3);
+    --border: var(--figma-color-border, #e6e6e6);
+    --brand: var(--figma-color-bg-brand, #0d99ff);
+    --brand-hover: #0b87e0;
+    --on-brand: var(--figma-color-text-onbrand, #ffffff);
+    --success: #14ae5c;
+    --success-bg: rgba(20, 174, 92, 0.08);
+    --warning: #d4880f;
+    --warning-bg: rgba(242, 162, 13, 0.08);
+    --danger: #f24822;
+    --danger-bg: rgba(242, 72, 34, 0.08);
+    --mono: "SF Mono", "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--bg);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Header ---- */
+  .header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header p {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  /* ---- Main scrollable area ---- */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px 16px;
+  }
+  .content::-webkit-scrollbar { width: 6px; }
+  .content::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  /* ---- Footer ---- */
+  .footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    gap: 8px;
+  }
+
+  /* ---- Frame label ---- */
+  .frame-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .frame-label .name {
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---- Collection dropdown ---- */
+  .collection-wrap {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .collection-wrap label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .collection-wrap label .lib-icon {
+    font-size: 12px;
+    line-height: 1;
+  }
+  .collection-wrap select {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px;
+  }
+  .collection-wrap select:focus { border-color: var(--brand); }
+  .collection-hint {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-top: 4px;
+  }
+
+  /* ---- Summary pills ---- */
+  .summary {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .pill {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .pill-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .pill.exact  { background: var(--success-bg); color: var(--success); }
+  .pill.exact .pill-dot  { background: var(--success); }
+  .pill.close  { background: var(--warning-bg); color: var(--warning); }
+  .pill.close .pill-dot  { background: var(--warning); }
+  .pill.none   { background: var(--danger-bg);  color: var(--danger);  }
+  .pill.none .pill-dot   { background: var(--danger);  }
+
+  /* ---- Select-all ---- */
+  .select-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+  .select-all:hover { color: var(--text); }
+  .select-all input { cursor: pointer; }
+
+  /* ---- Category groups ---- */
+  .cat { margin-bottom: 10px; }
+  .cat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 0 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+  }
+  .cat-count {
+    font-weight: 400;
+    color: var(--text-tertiary);
+  }
+
+  /* ---- Individual issue row ---- */
+  .issue {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 4px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s;
+    user-select: none;
+  }
+  .issue:hover { background: var(--bg-hover); }
+  .issue input[type="checkbox"] {
+    margin-top: 3px;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .issue-body { flex: 1; min-width: 0; }
+  .issue-top {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 1px;
+  }
+  .issue-node {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+  }
+  .issue-prop {
+    color: var(--text-secondary);
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .issue-vals {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+  .val-current {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--danger-bg);
+    color: var(--danger);
+    white-space: nowrap;
+  }
+  .val-arrow { color: var(--text-tertiary); font-size: 10px; }
+  .val-token {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .val-token.exact { background: var(--success-bg); color: var(--success); }
+  .val-token.close { background: var(--warning-bg); color: var(--warning); }
+  .val-token.none  { color: var(--text-tertiary); font-style: italic; }
+  .val-diff {
+    font-size: 9px;
+    font-weight: 500;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--warning-bg);
+    color: var(--warning);
+    white-space: nowrap;
+  }
+  .off-scale-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    font-size: 11px;
+    color: var(--warning);
+    cursor: help;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .off-scale-icon .tip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 4px);
+    right: 0;
+    width: 200px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.4;
+    white-space: normal;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .off-scale-icon:hover .tip {
+    display: block;
+  }
+  .token-select {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 4px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: var(--success-bg);
+    color: var(--success);
+    cursor: pointer;
+    outline: none;
+    max-width: 200px;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: border-color 0.15s;
+  }
+  .token-select:hover, .token-select:focus {
+    border-color: var(--brand);
+  }
+  .token-select.close {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+  .token-select.none {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+  .token-select.has-alts {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' fill='none'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%23999' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    padding-right: 16px;
+  }
+
+  /* ---- Buttons ---- */
+  .btn {
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    transition: all 0.12s;
+  }
+  .btn-primary {
+    background: var(--brand);
+    color: var(--on-brand);
+    flex: 1;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--brand-hover); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { background: var(--bg-hover); }
+
+  /* ---- State screens ---- */
+  .state-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 48px 24px;
+    height: 100%;
+    gap: 6px;
+  }
+  .state-icon {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+  .state-icon.success { background: var(--success-bg); }
+  .state-icon.warn    { background: var(--warning-bg); }
+  .state-icon.error   { background: var(--danger-bg);  }
+  .state-title { font-size: 13px; font-weight: 700; }
+  .state-msg {
+    color: var(--text-secondary);
+    line-height: 1.5;
+    max-width: 300px;
+  }
+  .state-msg strong { color: var(--text); }
+
+  /* ---- Spinner ---- */
+  .spinner {
+    width: 28px; height: 28px;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--brand);
+    border-radius: 50%;
+    animation: spin 0.55s linear infinite;
+    margin-bottom: 10px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <p>Find arbitrary values. Bind real tokens. Ship clean.</p>
+</div>
+
+<div class="content" id="content"></div>
+<div class="footer" id="footer" style="display:none"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+var state = {
+  view: "loading",
+  message: "Scanning your selection\u2026",
+  frameName: "",
+  libraries: [],
+  selectedLibraryId: null,
+  issues: [],
+  selectedIds: new Set(),
+  issueCount: 0,
+};
+
+var $content = document.getElementById("content");
+var $footer  = document.getElementById("footer");
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function esc(s) {
+  var d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function post(msg) {
+  parent.postMessage({ pluginMessage: msg }, "*");
+}
+
+// ---------------------------------------------------------------------------
+// Render router
+// ---------------------------------------------------------------------------
+function render() {
+  switch (state.view) {
+    case "loading":      return renderLoading();
+    case "error":        return renderError();
+    case "no-issues":    return renderNoIssues();
+    case "no-tokens":    return renderNoTokens();
+    case "results":      return renderResults();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Loading
+// ---------------------------------------------------------------------------
+function renderLoading() {
+  $footer.style.display = "none";
+  $content.innerHTML =
+    '<div class="state-screen"><div class="spinner"></div>' +
+    '<div class="state-msg">' + esc(state.message) + "</div></div>";
+}
+
+// ---------------------------------------------------------------------------
+// Error
+// ---------------------------------------------------------------------------
+function renderError() {
+  $footer.style.display = "flex";
+  $content.innerHTML =
+    '<div class="state-screen">' +
+      '<div class="state-icon error">!</div>' +
+      '<div class="state-title">Can\u2019t scan</div>' +
+      '<div class="state-msg">' + esc(state.message) + "</div>" +
+    "</div>";
+  $footer.innerHTML =
+    '<button class="btn btn-secondary" style="flex:1" onclick="rescan()">Rescan</button>';
+}
+
+// ---------------------------------------------------------------------------
+// No issues
+// ---------------------------------------------------------------------------
+function renderNoIssues() {
+  $footer.style.display = "flex";
+  $content.innerHTML =
+    '<div class="state-screen">' +
+      '<div class="state-icon success">\u2713</div>' +
+      '<div class="state-title">All clean!</div>' +
+      '<div class="state-msg"><strong>' + esc(state.frameName) + "</strong> " +
+        "has all spacing &amp; radius values properly bound to tokens.</div>" +
+    "</div>";
+  $footer.innerHTML =
+    '<button class="btn btn-secondary" style="flex:1" onclick="rescan()">Rescan</button>';
+}
+
+// ---------------------------------------------------------------------------
+// No tokens found
+// ---------------------------------------------------------------------------
+function renderNoTokens() {
+  $footer.style.display = "flex";
+  var errHint = state.libraryError
+    ? '<br><br><span style="color:var(--danger);font-size:10px">' + esc(state.libraryError) + "</span>"
+    : "";
+  $content.innerHTML =
+    '<div class="state-screen">' +
+      '<div class="state-icon warn">\u26A0</div>' +
+      '<div class="state-title">No token collections</div>' +
+      '<div class="state-msg">Found <strong>' + state.issueCount +
+        " unbound value" + (state.issueCount !== 1 ? "s" : "") +
+        "</strong> in <strong>" + esc(state.frameName) + "</strong>, " +
+        "but no FLOAT variable collections were found. " +
+        "Make sure a design-system library is enabled in this file." +
+        errHint + "</div>" +
+    "</div>";
+  $footer.innerHTML =
+    '<button class="btn btn-secondary" style="flex:1" onclick="rescan()">Rescan</button>';
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+function renderResults() {
+  var issues = state.issues;
+  var cats = { "padding-h": [], "padding-v": [], gap: [], radius: [] };
+  var catLabels = { "padding-h": "Horizontal Padding", "padding-v": "Vertical Padding", gap: "Gap / Spacing", radius: "Border Radius" };
+  issues.forEach(function (i) { cats[i.category].push(i); });
+
+  var recommended = 0, exactOther = 0, offScale = 0, none = 0;
+  issues.forEach(function (i) {
+    if (i.tier === "recommended") recommended++;
+    else if (i.tier === "exact-other") exactOther++;
+    else if (i.tier === "close") offScale++;
+    else none++;
+  });
+
+  // Auto-select: recommended, exact-other, and off-scale (close with no exact)
+  if (state.selectedIds.size === 0 && state._autoSelect) {
+    issues.forEach(function (i) {
+      if (i.token && (i.tier === "recommended" || i.tier === "exact-other" || i.tier === "close"))
+        state.selectedIds.add(i.id);
+    });
+    state._autoSelect = false;
+  }
+
+  var h = "";
+
+  // Frame label
+  h += '<div class="frame-label">Scanning: <span class="name">' + esc(state.frameName) + "</span></div>";
+
+  // Library warning if fetch failed
+  if (state.libraryError) {
+    h += '<div style="padding:6px 10px;margin-bottom:10px;border-radius:6px;background:var(--warning-bg);color:var(--warning);font-size:10px;">' +
+      'Team libraries could not be loaded. Only showing local collections. ' +
+      '<span style="opacity:0.7">(' + esc(state.libraryError) + ')</span></div>';
+  }
+
+  // Library dropdown
+  var libCount = state.libraries.length;
+  h += '<div class="collection-wrap">' +
+    '<label>Design System Library</label>' +
+    '<select onchange="switchLib(this.value)">';
+  state.libraries.forEach(function (lib) {
+    var sel = lib.id === state.selectedLibraryId ? " selected" : "";
+    var src = lib.source === "library" ? " (Team Library)" : "";
+    h += '<option value="' + esc(lib.id) + '"' + sel + ">" +
+      esc(lib.name) + " \u00B7 " + lib.tokenCount + " tokens" + src + "</option>";
+  });
+  h += "</select>";
+  if (libCount > 1) {
+    h += '<div class="collection-hint">' + libCount + ' libraries available \u2014 all token collections within the selected library are used.</div>';
+  }
+  h += "</div>";
+
+  // Summary pills
+  h += '<div class="summary">';
+  if (recommended) h += '<span class="pill exact"><span class="pill-dot"></span>' + recommended + " recommended</span>";
+  if (exactOther) h += '<span class="pill close"><span class="pill-dot"></span>' + exactOther + " exact (diff category)</span>";
+  if (offScale) h += '<span class="pill none"><span class="pill-dot"></span>' + offScale + " off-scale</span>";
+  if (none)  h += '<span class="pill none"><span class="pill-dot"></span>'  + none  + " no match</span>";
+  h += "</div>";
+
+  // Select-all (recommended + exact-other + off-scale are fixable)
+  var fixable = issues.filter(function (i) {
+    return i.token && (i.tier === "recommended" || i.tier === "exact-other" || i.tier === "close");
+  });
+  var allChecked = fixable.length > 0 && fixable.every(function (i) {
+    return state.selectedIds.has(i.id);
+  });
+  h += '<label class="select-all">' +
+    '<input type="checkbox"' + (allChecked ? " checked" : "") +
+    ' onchange="toggleAll(this.checked)"> Select all fixable (' + fixable.length + ")</label>";
+
+  // Categories
+  ["padding-h", "padding-v", "gap", "radius"].forEach(function (cat) {
+    var list = cats[cat];
+    if (!list.length) return;
+    h += '<div class="cat"><div class="cat-header">' +
+      catLabels[cat] +
+      '<span class="cat-count">' + list.length + "</span></div>";
+    list.forEach(function (issue) { h += renderIssue(issue); });
+    h += "</div>";
+  });
+
+  $content.innerHTML = h;
+
+  // Footer
+  var selectedCount = 0;
+  state.selectedIds.forEach(function (id) {
+    var iss = issues.find(function (i) { return i.id === id; });
+    if (iss && iss.token) selectedCount++;
+  });
+
+  $footer.style.display = "flex";
+  $footer.innerHTML =
+    '<button class="btn btn-secondary" onclick="rescan()">Rescan</button>' +
+    '<button class="btn btn-primary" onclick="applyFixes()"' +
+      (selectedCount === 0 ? " disabled" : "") + ">" +
+      "Apply" + (selectedCount > 0 ? " (" + selectedCount + ")" : "") + "</button>";
+}
+
+function tierToCss(tier) {
+  if (tier === "recommended") return "";
+  if (tier === "exact-other") return " close";
+  return " none";
+}
+
+function shiftLabel(currentValue, tokenValue) {
+  var delta = tokenValue - currentValue;
+  if (delta === 0) return "";
+  return delta > 0 ? " (\u2192 +" + delta + "px)" : " (\u2192 " + delta + "px)";
+}
+
+function renderIssue(issue) {
+  var hasToken = !!issue.token;
+  var tier = issue.tier;
+  var checked = state.selectedIds.has(issue.id);
+  var fixable = tier === "recommended" || tier === "exact-other";
+  var alts = issue.alternatives || [];
+
+  var recAlts = alts.filter(function (a) { return a.tier === "recommended"; });
+  var exactAlts = alts.filter(function (a) { return a.tier === "exact-other"; });
+  var closeAlts = alts.filter(function (a) { return a.tier === "close"; });
+  var isOffScale = recAlts.length === 0 && exactAlts.length === 0 && closeAlts.length > 0;
+
+  var disabled = !hasToken || (!fixable && !isOffScale);
+
+  var tokenHtml;
+
+  if (isOffScale && hasToken) {
+    var selectCls = "token-select has-alts close";
+    var nameMatchAlts = closeAlts.filter(function (a) {
+      return a.score > 0;
+    });
+    var otherAlts = closeAlts.filter(function (a) {
+      return a.score <= 0;
+    });
+    var hasGroups = nameMatchAlts.length > 0 && otherAlts.length > 0;
+    var selectedDelta = issue.token.value - issue.currentValue;
+    var shiftDir = selectedDelta > 0 ? "+" + selectedDelta : String(selectedDelta);
+    var tooltipText = issue.currentValue + "px is not on the spacing scale. Applying will shift the value by " + shiftDir + "px.";
+
+    tokenHtml = '<span class="val-arrow">\u2192</span>' +
+      '<select class="' + selectCls + '" onchange="overrideToken(\'' + issue.id + '\', this.value); event.stopPropagation();">';
+
+    if (hasGroups) {
+      tokenHtml += '<optgroup label="Nearest tokens">';
+      nameMatchAlts.forEach(function (alt) {
+        var idx = alts.indexOf(alt);
+        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+          esc(alt.token.name) + " = " + alt.token.value + "px" +
+          shiftLabel(issue.currentValue, alt.token.value) + "</option>";
+      });
+      tokenHtml += '</optgroup><optgroup label="Other values">';
+      otherAlts.forEach(function (alt) {
+        var idx = alts.indexOf(alt);
+        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+          esc(alt.token.name) + " = " + alt.token.value + "px" +
+          shiftLabel(issue.currentValue, alt.token.value) + "</option>";
+      });
+      tokenHtml += "</optgroup>";
+    } else {
+      closeAlts.forEach(function (alt) {
+        var idx = alts.indexOf(alt);
+        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+          esc(alt.token.name) + " = " + alt.token.value + "px" +
+          shiftLabel(issue.currentValue, alt.token.value) + "</option>";
+      });
+    }
+    tokenHtml += '</select><span class="off-scale-icon">\u26A0<span class="tip">' + esc(tooltipText) + '</span></span>';
+
+  } else if (alts.length > 1 && hasToken) {
+    // Normal case: has exact matches (recommended or exact-other)
+    var selectCls = "token-select has-alts" + tierToCss(tier);
+    var hasSections = (recAlts.length > 0) + (exactAlts.length > 0) + (closeAlts.length > 0) > 1;
+
+    tokenHtml = '<span class="val-arrow">\u2192</span>' +
+      '<select class="' + selectCls + '" onchange="overrideToken(\'' + issue.id + '\', this.value); event.stopPropagation();">';
+
+    if (hasSections) {
+      if (recAlts.length > 0) {
+        tokenHtml += '<optgroup label="Recommended">';
+        recAlts.forEach(function (alt) {
+          var idx = alts.indexOf(alt);
+          var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+          tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+            esc(alt.token.name) + " = " + alt.token.value + "px</option>";
+        });
+        tokenHtml += "</optgroup>";
+      }
+      if (exactAlts.length > 0) {
+        tokenHtml += '<optgroup label="Exact value, different category">';
+        exactAlts.forEach(function (alt) {
+          var idx = alts.indexOf(alt);
+          var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+          tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+            esc(alt.token.name) + " = " + alt.token.value + "px</option>";
+        });
+        tokenHtml += "</optgroup>";
+      }
+      if (closeAlts.length > 0) {
+        tokenHtml += '<optgroup label="Close matches">';
+        closeAlts.forEach(function (alt) {
+          var idx = alts.indexOf(alt);
+          var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+          tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+            esc(alt.token.name) + " = " + alt.token.value + "px" +
+            shiftLabel(issue.currentValue, alt.token.value) + "</option>";
+        });
+        tokenHtml += "</optgroup>";
+      }
+    } else {
+      alts.forEach(function (alt) {
+        var idx = alts.indexOf(alt);
+        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+        var diffLabel = alt.difference > 0 ? shiftLabel(issue.currentValue, alt.token.value) : "";
+        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
+          esc(alt.token.name) + " = " + alt.token.value + "px" + diffLabel + "</option>";
+      });
+    }
+    tokenHtml += "</select>";
+
+  } else if (tier === "recommended") {
+    tokenHtml =
+      '<span class="val-arrow">\u2192</span>' +
+      '<span class="val-token exact">' + esc(issue.token.name) + "</span>";
+  } else if (tier === "exact-other") {
+    tokenHtml =
+      '<span class="val-arrow">\u2192</span>' +
+      '<span class="val-token close">' + esc(issue.token.name) + "</span>";
+  } else if (tier === "close" && hasToken) {
+    var singleDelta = issue.token.value - issue.currentValue;
+    var singleDir = singleDelta > 0 ? "+" + singleDelta : String(singleDelta);
+    var singleTip = issue.currentValue + "px is not on the spacing scale. Applying will shift the value by " + singleDir + "px.";
+    tokenHtml =
+      '<span class="val-arrow">\u2192</span>' +
+      '<span class="val-token close">' + esc(issue.token.name) +
+        " = " + issue.token.value + "px" +
+        shiftLabel(issue.currentValue, issue.token.value) + "</span>" +
+      '<span class="off-scale-icon">\u26A0<span class="tip">' + esc(singleTip) + '</span></span>';
+  } else {
+    tokenHtml = '<span class="val-token none">no match</span>';
+  }
+
+  return '<label class="issue">' +
+    '<input type="checkbox"' +
+      (checked ? " checked" : "") +
+      (disabled ? " disabled" : "") +
+      ' onchange="toggleOne(\'' + issue.id + '\',this.checked)">' +
+    '<div class="issue-body">' +
+      '<div class="issue-top">' +
+        '<span class="issue-node">' + esc(issue.nodeName) + "</span>" +
+        '<span class="issue-prop">/ ' + esc(issue.label) + "</span>" +
+      "</div>" +
+      '<div class="issue-vals">' +
+        '<span class="val-current">' + issue.currentValue + "px</span>" +
+        tokenHtml +
+      "</div>" +
+    "</div></label>";
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+function rescan() {
+  state.selectedIds = new Set();
+  post({ type: "scan" });
+}
+
+function switchLib(id) {
+  state.selectedIds = new Set();
+  state._autoSelect = true;
+  post({ type: "switch-library", libraryId: id });
+}
+
+function toggleOne(id, checked) {
+  if (checked) state.selectedIds.add(id);
+  else state.selectedIds.delete(id);
+  render();
+}
+
+function overrideToken(issueId, altIndexStr) {
+  var altIndex = parseInt(altIndexStr, 10);
+  var issue = state.issues.find(function (i) { return i.id === issueId; });
+  if (!issue || !issue.alternatives || !issue.alternatives[altIndex]) return;
+  var alt = issue.alternatives[altIndex];
+  issue.token = alt.token;
+  issue.tier = alt.tier;
+  issue.difference = alt.difference;
+
+  if (alt.token) {
+    state.selectedIds.add(issueId);
+  } else {
+    state.selectedIds.delete(issueId);
+  }
+
+  render();
+}
+
+function toggleAll(checked) {
+  if (checked) {
+    state.issues.forEach(function (i) {
+      if (i.token && (i.tier === "recommended" || i.tier === "exact-other" || i.tier === "close"))
+        state.selectedIds.add(i.id);
+    });
+  } else {
+    state.selectedIds.clear();
+  }
+  render();
+}
+
+function applyFixes() {
+  var ids = [];
+  state.selectedIds.forEach(function (id) {
+    var iss = state.issues.find(function (i) { return i.id === id; });
+    if (iss && iss.token) ids.push(id);
+  });
+  post({ type: "apply", issueIds: ids });
+}
+
+// ---------------------------------------------------------------------------
+// Incoming messages from plugin sandbox
+// ---------------------------------------------------------------------------
+window.onmessage = function (event) {
+  var msg = event.data.pluginMessage;
+  if (!msg) return;
+
+  switch (msg.type) {
+    case "loading":
+      state.view = "loading";
+      state.message = msg.message;
+      render();
+      break;
+
+    case "error":
+      state.view = "error";
+      state.message = msg.message;
+      render();
+      break;
+
+    case "no-issues":
+      state.view = "no-issues";
+      state.frameName = msg.frameName;
+      render();
+      break;
+
+    case "no-tokens":
+      state.view = "no-tokens";
+      state.frameName = msg.frameName;
+      state.issueCount = msg.issueCount;
+      state.libraryError = msg.libraryError || null;
+      render();
+      break;
+
+    case "scan-complete":
+      state.view = "results";
+      state.frameName = msg.frameName;
+      state.libraries = msg.libraries;
+      state.selectedLibraryId = msg.selectedLibraryId;
+      state.issues = msg.issues;
+      state.libraryError = msg.libraryError || null;
+      state.selectedIds = new Set();
+      state._autoSelect = true;
+      render();
+      break;
+
+    case "library-switched":
+      state.view = "results";
+      state.selectedLibraryId = msg.selectedLibraryId;
+      state.issues = msg.issues;
+      state.selectedIds = new Set();
+      state._autoSelect = true;
+      render();
+      break;
+
+    case "apply-complete":
+      state.view = "loading";
+      var s = msg.applied === 1 ? "" : "es";
+      state.message = "Applied " + msg.applied + " fix" + s +
+        (msg.failed > 0 ? " (" + msg.failed + " failed)" : "") +
+        "! Rescanning\u2026";
+      render();
+      break;
+  }
+};
+
+// Initial render
+render();
+</script>
+</body>
+</html>
