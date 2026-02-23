@@ -1,6 +1,6 @@
 {
-  "name": "Move It Move It",
-  "id": "move-it-move-it-figma-plugin",
+  "name": "I like to, move it",
+  "id": "i-like-to-move-it-figma-plugin",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/ui.html",

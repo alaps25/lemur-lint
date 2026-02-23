@@ -1,4 +1,4 @@
-# Move It Move It — Figma Token Audit Plugin
+# I like to, move it — Figma Token Audit Plugin
 
 Scans a selected frame for hardcoded spacing, padding, gap, and border-radius
 values, matches them against your design system's variable tokens using
@@ -17,7 +17,7 @@ npm run build
 1. Open the Figma desktop app
 2. Go to **Plugins → Development → Import plugin from manifest…**
 3. Select the `manifest.json` file from this folder
-4. Open any design file, select a frame, and run **Plugins → Development → Move It Move It**
+4. Open any design file, select a frame, and run **Plugins → Development → I like to, move it**
 
 ## How It Works
 

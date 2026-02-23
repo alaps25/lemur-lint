@@ -1,5 +1,5 @@
 {
-  "name": "move-it-move-it",
+  "name": "i-like-to-move-it",
   "version": "1.0.0",
   "description": "Figma plugin to detect arbitrary spacing values and replace them with proper design system tokens",
   "scripts": {

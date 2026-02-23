@@ -1,4 +1,4 @@
-# Move It Move It — Architecture & Token Matching Rules
+# I like to, move it — Architecture & Token Matching Rules
 
 This document explains how the plugin works end-to-end, how token matching
 decisions are made, and how to extend it for other design systems.
