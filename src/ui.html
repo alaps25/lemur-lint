@@ -493,9 +493,10 @@ function render() {
 // ---------------------------------------------------------------------------
 function renderLoading() {
   $footer.style.display = "none";
+  var hint = state.loadingHint ? '<div style="margin-top:6px;font-size:10px;opacity:0.55;font-style:italic;">' + esc(state.loadingHint) + '</div>' : '';
   $content.innerHTML =
     '<div class="state-screen"><div class="spinner"></div>' +
-    '<div class="state-msg">' + esc(state.message) + "</div></div>";
+    '<div class="state-msg">' + esc(state.message) + hint + "</div></div>";
 }
 
 // ---------------------------------------------------------------------------
@@ -523,7 +524,7 @@ function renderNoIssues() {
       '<div class="state-icon success">\u2713</div>' +
       '<div class="state-title">All clean!</div>' +
       '<div class="state-msg"><strong>' + esc(state.frameName) + "</strong> " +
-        "has all spacing &amp; radius values properly bound to tokens.</div>" +
+        "has all spacing, radius, and color values properly bound to tokens.</div>" +
     "</div>";
   $footer.innerHTML =
     '<button class="btn btn-secondary" style="flex:1" onclick="rescan()">Rescan</button>';
@@ -559,14 +560,12 @@ function renderResults() {
   var issues = state.issues;
   var cats = {
     "padding-h": [], "padding-v": [], gap: [], radius: [],
-    fill: [], "text-fill": [], stroke: [],
-    "font-size": [], "font-weight": [], "line-height": []
+    fill: [], "text-fill": [], stroke: []
   };
   var catLabels = {
-    "padding-h": "Horizontal Padding", "padding-v": "Vertical Padding",
-    gap: "Gap / Spacing", radius: "Border Radius",
-    fill: "Fill Color", "text-fill": "Text Color", stroke: "Stroke Color",
-    "font-size": "Font Size", "font-weight": "Font Weight", "line-height": "Line Height"
+    "padding-h": "Padding (Horizontal)", "padding-v": "Padding (Vertical)",
+    gap: "Gap", radius: "Radius",
+    fill: "Fill", "text-fill": "Text Fill", stroke: "Stroke"
   };
   issues.forEach(function (i) { if (cats[i.category]) cats[i.category].push(i); });
 
@@ -619,26 +618,26 @@ function renderResults() {
 
   // Summary pills
   h += '<div class="summary">';
-  if (recommended) h += '<span class="pill exact"><span class="pill-dot"></span>' + recommended + " recommended</span>";
+  if (recommended) h += '<span class="pill exact"><span class="pill-dot"></span>' + recommended + " exact</span>";
   if (closeRight) h += '<span class="pill close"><span class="pill-dot"></span>' + closeRight + " off-scale</span>";
-  if (exactOther) h += '<span class="pill none"><span class="pill-dot"></span>' + exactOther + " wrong category</span>";
-  if (closeOther) h += '<span class="pill none"><span class="pill-dot"></span>' + closeOther + " off-scale (wrong cat)</span>";
+  if (exactOther) h += '<span class="pill none"><span class="pill-dot"></span>' + exactOther + " wrong property</span>";
+  if (closeOther) h += '<span class="pill none"><span class="pill-dot"></span>' + closeOther + " off-scale (wrong property)</span>";
   if (none)  h += '<span class="pill none"><span class="pill-dot"></span>'  + none  + " no match</span>";
   h += "</div>";
 
-  // Select-all: recommended + close-right are auto-fixable
+  // Select-all: recommended + close-right are auto-fixable; text styles with a match are fixable
   var fixable = issues.filter(function (i) {
     return i.token && (i.tier === "recommended" || i.tier === "close-right");
   });
-  var allChecked = fixable.length > 0 && fixable.every(function (i) {
-    return state.selectedIds.has(i.id);
-  });
+  var totalFixable = fixable.length;
+  var allChecked = totalFixable > 0 &&
+    fixable.every(function (i) { return state.selectedIds.has(i.id); });
   h += '<label class="select-all">' +
     '<input type="checkbox"' + (allChecked ? " checked" : "") +
-    ' onchange="toggleAll(this.checked)"> Select all fixable (' + fixable.length + ")</label>";
+    ' onchange="toggleAll(this.checked)"> Select all fixable (' + totalFixable + ")</label>";
 
   // Categories
-  ["padding-h", "padding-v", "gap", "radius", "fill", "text-fill", "stroke", "font-size", "font-weight", "line-height"].forEach(function (cat) {
+  ["padding-h", "padding-v", "gap", "radius", "fill", "text-fill", "stroke"].forEach(function (cat) {
     var list = cats[cat];
     if (!list.length) return;
     h += '<div class="cat"><div class="cat-header">' +
@@ -711,10 +710,10 @@ function renderIssue(issue) {
     var selectCls = "token-select has-alts" + tierToCss(tier);
 
     var groups = [];
-    if (recAlts.length > 0) groups.push({ label: "Recommended", alts: recAlts, showShift: false });
-    if (closeRightAlts.length > 0) groups.push({ label: "Nearest (right category)", alts: closeRightAlts, showShift: true });
-    if (exactOtherAlts.length > 0) groups.push({ label: "Exact value, different category", alts: exactOtherAlts, showShift: false });
-    if (closeOtherAlts.length > 0) groups.push({ label: "Nearest (different category)", alts: closeOtherAlts, showShift: true });
+    if (recAlts.length > 0) groups.push({ label: "Exact match", alts: recAlts, showShift: false });
+    if (closeRightAlts.length > 0) groups.push({ label: "Nearest value", alts: closeRightAlts, showShift: true });
+    if (exactOtherAlts.length > 0) groups.push({ label: "Exact value, different property", alts: exactOtherAlts, showShift: false });
+    if (closeOtherAlts.length > 0) groups.push({ label: "Nearest value, different property", alts: closeOtherAlts, showShift: true });
     var hasSections = groups.length > 1;
 
     tokenHtml = '<span class="val-arrow">\u2192</span>' +
@@ -768,11 +767,11 @@ function renderIssue(issue) {
   } else if (hasToken && tier === "exact-other") {
     tokenHtml =
       '<span class="val-arrow">\u2192</span>' +
-      '<span class="val-token none">' + esc(issue.token.name) + " (wrong category)</span>";
+      '<span class="val-token none">' + esc(issue.token.name) + " (different property)</span>";
   } else if (hasToken && (tier === "close-other")) {
     var singleDelta2 = issue.token.value - issue.currentValue;
     var singleDir2 = singleDelta2 > 0 ? "+" + singleDelta2 : String(singleDelta2);
-    var singleTip2 = issue.currentValue + "px is not on the design scale. Nearest token is a different category. Shift: " + singleDir2 + "px.";
+    var singleTip2 = issue.currentValue + "px is not on the design scale. Nearest token is a different property type. Shift: " + singleDir2 + "px.";
     tokenHtml =
       '<span class="val-arrow">\u2192</span>' +
       '<span class="val-token none">' + esc(issue.token.name) +
@@ -860,11 +859,23 @@ function toggleAll(checked) {
 
 function applyFixes() {
   var ids = [];
+  var tokenOverrides = {};
   state.selectedIds.forEach(function (id) {
     var iss = state.issues.find(function (i) { return i.id === id; });
-    if (iss && iss.token) ids.push(id);
+    if (iss && iss.token) {
+      ids.push(id);
+      tokenOverrides[id] = {
+        variableId: iss.token.variableId,
+        variableKey: iss.token.variableKey || null,
+        source: iss.token.source,
+      };
+    }
   });
-  post({ type: "apply", issueIds: ids });
+  post({
+    type: "apply",
+    issueIds: ids,
+    tokenOverrides: tokenOverrides,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +889,7 @@ window.onmessage = function (event) {
     case "loading":
       state.view = "loading";
       state.message = msg.message;
+      state.loadingHint = msg.hint || null;
       render();
       break;
 

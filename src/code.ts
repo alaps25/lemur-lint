@@ -6,8 +6,7 @@ figma.showUI(__html__, { width: 460, height: 600, themeColors: true });
 
 type Category =
   | "padding-h" | "padding-v" | "gap" | "radius"
-  | "fill" | "text-fill" | "stroke"
-  | "font-size" | "font-weight" | "line-height";
+  | "fill" | "text-fill" | "stroke";
 
 type ScanType = "float" | "color";
 
@@ -93,12 +92,6 @@ const RADIUS_FIELDS: FieldDef[] = [
   { field: "bottomRightRadius", label: "Bottom-Right Radius", category: "radius" },
 ];
 
-const TYPOGRAPHY_FIELDS: FieldDef[] = [
-  { field: "fontSize",   label: "Font Size",   category: "font-size" },
-  { field: "fontWeight",  label: "Font Weight",  category: "font-weight" },
-  { field: "lineHeight", label: "Line Height", category: "line-height" },
-];
-
 // ---------------------------------------------------------------------------
 // Token Matching Rules
 //
@@ -135,11 +128,6 @@ const TYPOGRAPHY_FIELDS: FieldDef[] = [
 //   - color/content-*               → text fills
 //   - color/stroke-*                → strokes / borders
 //   - color/brand-*, color/input-*  → context-dependent
-//
-// Typography naming (Personio):
-//   - font-sizes-*, font-size       → font size
-//   - font-weights-*, font-weight   → font weight
-//   - line-heights-*, line-height   → line height
 // ---------------------------------------------------------------------------
 
 interface MatchRule {
@@ -231,27 +219,6 @@ const MATCH_RULES: MatchRule[] = [
     patterns: [/\bcolor\b/],
     priority: 2,
   },
-  // --- Typography rules ---
-  {
-    category: "font-size",
-    patterns: [/font.?size/, /\btext.?size/, /\bfont.?sizes/],
-    priority: 10,
-  },
-  {
-    category: "font-size",
-    patterns: [/\btypography\b/],
-    priority: 2,
-  },
-  {
-    category: "font-weight",
-    patterns: [/font.?weight/, /\bweight/],
-    priority: 10,
-  },
-  {
-    category: "line-height",
-    patterns: [/line.?height/, /\bleading\b/, /\bline.?heights/],
-    priority: 10,
-  },
 ];
 
 const CLOSE_THRESHOLD = 3;
@@ -288,6 +255,7 @@ function scanPaints(
   for (let i = 0; i < paints.length; i++) {
     const p = paints[i];
     if (!p || p.type !== "SOLID") continue;
+    if (p.visible === false) continue;
     const bv = p.boundVariables;
     if (bv && bv.color) continue;
     const c = p.color;
@@ -346,31 +314,6 @@ function scanNode(node: SceneNode, results: ScanResult[]): void {
     scanPaints(node, results, "strokes", "stroke", "Stroke Color");
   }
 
-  // --- Typography (TextNode, uniform styles only) ---
-  if (isText) {
-    const tn = node as TextNode;
-    for (const def of TYPOGRAPHY_FIELDS) {
-      let val: number | undefined;
-
-      if (def.field === "lineHeight") {
-        const lh = tn.lineHeight;
-        if (lh && typeof lh === "object" && "value" in lh && lh.unit === "PIXELS") {
-          val = lh.value;
-        }
-      } else {
-        const raw = (tn as any)[def.field];
-        if (typeof raw === "number") val = raw;
-      }
-
-      if (val !== undefined && val > 0) {
-        const bv = (tn as any).boundVariables;
-        const bound = bv && bv[def.field];
-        const isBound = Array.isArray(bound) ? bound.length > 0 : !!bound;
-        if (!isBound) pushFloatResult(results, node, def, val);
-      }
-    }
-  }
-
   // --- Recurse children ---
   if ("children" in node) {
     for (const child of (node as FrameNode).children) {
@@ -389,6 +332,34 @@ function isRgb(val: any): val is { r: number; g: number; b: number } {
   return val && typeof val.r === "number" && typeof val.g === "number" && typeof val.b === "number";
 }
 
+function isVariableAlias(val: any): val is { type: string; id: string } {
+  return val && typeof val === "object" && val.type === "VARIABLE_ALIAS" && typeof val.id === "string";
+}
+
+async function resolveAliasValue(
+  rawValue: any, modeId: string, depth?: number
+): Promise<{ resolved: number | { r: number; g: number; b: number } | null }> {
+  const d = depth || 0;
+  if (d > 5) return { resolved: null };
+  if (typeof rawValue === "number") return { resolved: rawValue };
+  if (isRgb(rawValue)) return { resolved: rawValue };
+  if (isVariableAlias(rawValue)) {
+    try {
+      const target = await figma.variables.getVariableByIdAsync(rawValue.id);
+      if (!target) return { resolved: null };
+      const targetCol = await figma.variables.getVariableCollectionByIdAsync(
+        target.variableCollectionId
+      );
+      if (!targetCol) return { resolved: null };
+      const targetMode = targetCol.modes[0].modeId;
+      return resolveAliasValue(target.valuesByMode[targetMode], targetMode, d + 1);
+    } catch {
+      return { resolved: null };
+    }
+  }
+  return { resolved: null };
+}
+
 async function getLocalTokens(): Promise<{
   library: LibraryInfo | null;
   tokens: TokenInfo[];
@@ -404,17 +375,20 @@ async function getLocalTokens(): Promise<{
       const rawValue = v.valuesByMode[modeId];
       const scopes = v.scopes ? [...v.scopes] : [];
 
-      if (v.resolvedType === "FLOAT" && typeof rawValue === "number") {
+      const { resolved } = await resolveAliasValue(rawValue, modeId);
+      if (resolved === null) continue;
+
+      if (v.resolvedType === "FLOAT" && typeof resolved === "number") {
         tokens.push({
-          variableId: v.id, name: v.name, value: rawValue,
+          variableId: v.id, name: v.name, value: resolved,
           color: null, tokenType: "float",
           libraryId: LOCAL_LIBRARY_ID, source: "local", scopes,
         });
-      } else if (v.resolvedType === "COLOR" && isRgb(rawValue)) {
-        const a = typeof (rawValue as any).a === "number" ? (rawValue as any).a : 1;
+      } else if (v.resolvedType === "COLOR" && isRgb(resolved)) {
+        const a = typeof (resolved as any).a === "number" ? (resolved as any).a : 1;
         tokens.push({
           variableId: v.id, name: v.name, value: 0,
-          color: { r: rawValue.r, g: rawValue.g, b: rawValue.b, a },
+          color: { r: resolved.r, g: resolved.g, b: resolved.b, a },
           tokenType: "color",
           libraryId: LOCAL_LIBRARY_ID, source: "local", scopes,
         });
@@ -467,8 +441,14 @@ async function getTeamLibraries(): Promise<{
       refs: LibVarRef[];
     }>();
 
-    for (const lc of libCols) {
+    for (let ci = 0; ci < libCols.length; ci++) {
+      const lc = libCols[ci];
       console.log("[Move It] Collection:", lc.name, "from", lc.libraryName);
+      figma.ui.postMessage({
+        type: "loading",
+        message: `Discovering tokens\u2026 ${ci + 1}/${libCols.length} collections`,
+        hint: FIRST_RUN_HINT,
+      });
       const vars =
         await figma.teamLibrary.getVariablesInLibraryCollectionAsync(lc.key);
       const usableVars = vars.filter((v) => v.resolvedType === "FLOAT" || v.resolvedType === "COLOR");
@@ -517,8 +497,9 @@ async function getTeamLibraries(): Promise<{
 // Import library tokens — batched in parallel with timeout + progress
 // ---------------------------------------------------------------------------
 
-const BATCH_SIZE = 8;
+const BATCH_SIZE = 20;
 const PER_VAR_TIMEOUT_MS = 5000;
+const FIRST_RUN_HINT = "First time takes a moment \u2014 after this it\u2019ll be snappy, promise!";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return new Promise((resolve) => {
@@ -559,22 +540,25 @@ async function importLibraryTokens(
           );
           if (!col) return null;
           const modeId = col.modes[0].modeId;
-          const val = variable.valuesByMode[modeId];
+          const rawVal = variable.valuesByMode[modeId];
           const scopes = variable.scopes ? [...variable.scopes] : [];
 
-          if (typeof val === "number") {
+          const { resolved } = await resolveAliasValue(rawVal, modeId);
+          if (resolved === null) return null;
+
+          if (typeof resolved === "number") {
             return {
               variableId: variable.id, variableKey: ref.key,
-              name: variable.name, value: val, color: null, tokenType: "float" as const,
+              name: variable.name, value: resolved, color: null, tokenType: "float" as const,
               libraryId, collectionKey: ref.collectionKey,
               source: "library" as const, scopes,
             };
-          } else if (isRgb(val)) {
-            const a = typeof (val as any).a === "number" ? (val as any).a : 1;
+          } else if (isRgb(resolved)) {
+            const a = typeof (resolved as any).a === "number" ? (resolved as any).a : 1;
             return {
               variableId: variable.id, variableKey: ref.key,
               name: variable.name, value: 0,
-              color: { r: val.r, g: val.g, b: val.b, a },
+              color: { r: resolved.r, g: resolved.g, b: resolved.b, a },
               tokenType: "color" as const,
               libraryId, collectionKey: ref.collectionKey,
               source: "library" as const, scopes,
@@ -595,6 +579,7 @@ async function importLibraryTokens(
     figma.ui.postMessage({
       type: "loading",
       message: `Importing tokens\u2026 ${imported}/${total}`,
+      hint: FIRST_RUN_HINT,
     });
   }
 
@@ -653,12 +638,6 @@ function scopeMatchesCategory(scopes: string[], category: Category): boolean {
       return scopes.includes("ALL_FILLS") || scopes.includes("TEXT_FILL");
     case "stroke":
       return scopes.includes("STROKE_COLOR");
-    case "font-size":
-      return scopes.includes("FONT_SIZE");
-    case "font-weight":
-      return scopes.includes("FONT_WEIGHT");
-    case "line-height":
-      return scopes.includes("LINE_HEIGHT");
     default:
       return false;
   }
@@ -678,12 +657,6 @@ function scopeStrictMatchesCategory(scopes: string[], category: Category): boole
       return scopes.includes("ALL_FILLS") || scopes.includes("TEXT_FILL");
     case "stroke":
       return scopes.includes("STROKE_COLOR");
-    case "font-size":
-      return scopes.includes("FONT_SIZE");
-    case "font-weight":
-      return scopes.includes("FONT_WEIGHT");
-    case "line-height":
-      return scopes.includes("LINE_HEIGHT");
     default:
       return false;
   }
@@ -725,10 +698,13 @@ function classifyColorAlternative(
   const scopeMatches = scopeMatchesCategory(token.scopes, category);
 
   const tier: MatchTier = nameMatches ? "recommended" : "exact-other";
-  let score = nameScore * 10 + (scopeMatches ? 5 : 0) + depthPenalty(token.name);
+  let score = nameScore * 10 + (scopeMatches ? 5 : 0) + tokenLevelScore(token.name);
 
   return { tier, difference: Math.round(dist * 1000) / 1000, score };
 }
+
+const COLOR_CLOSE_THRESHOLD = 0.15;
+const COLOR_FALLBACK_LIMIT = 5;
 
 function findRankedColorTokens(
   targetColor: ColorValue,
@@ -741,6 +717,41 @@ function findRankedColorTokens(
     const result = classifyColorAlternative(token, targetColor, category);
     if (!result) continue;
     candidates.push({ token, tier: result.tier, difference: result.difference, score: result.score });
+  }
+
+  // Always include nearest color alternatives so the user has a dropdown
+  // to pick from — even when there are exact matches. De-duplicate against
+  // tokens already in candidates.
+  const existingIds = new Set(candidates.map((c) => c.token.variableId));
+  const eligible = tokens.filter(
+    (t) => t.tokenType === "color" && t.color && !isExcludedToken(t.name) && !existingIds.has(t.variableId)
+  );
+
+  const scored = eligible.map((t) => {
+    const dist = colorDistance(targetColor, t.color!);
+    return { token: t, dist };
+  });
+  scored.sort((a, b) => a.dist - b.dist);
+
+  const fallback = scored.slice(0, COLOR_FALLBACK_LIMIT);
+
+  for (const entry of fallback) {
+    const nameMatches = tokenNameMatchesCategory(entry.token.name, category);
+    const nameScore = tokenNameRelevanceScore(entry.token.name, category);
+    const scopeMatches = scopeMatchesCategory(entry.token.scopes, category);
+    const isClose = entry.dist <= COLOR_CLOSE_THRESHOLD;
+    let tier: MatchTier;
+    if (isClose && nameMatches) tier = "close-right";
+    else if (isClose) tier = "close-other";
+    else if (nameMatches) tier = "close-right";
+    else tier = "close-other";
+    const score = nameScore * 10 + (scopeMatches ? 5 : 0) - entry.dist * 100 + tokenLevelScore(entry.token.name);
+    candidates.push({
+      token: entry.token,
+      tier,
+      difference: Math.round(entry.dist * 1000) / 1000,
+      score,
+    });
   }
 
   const tierOrder: Record<MatchTier, number> = {
@@ -767,12 +778,15 @@ function isExcludedToken(name: string): boolean {
   return EXCLUDED_TOKEN_PATTERNS.some((pat) => pat.test(name));
 }
 
-// Tokens with deeply nested paths (3+ segments) are likely component-internal.
-// We penalize them so primitive/semantic tokens rank higher.
-function depthPenalty(name: string): number {
+// Semantic vs primitive scoring. Semantic tokens (context-aware names like
+// "Item Padding/Horizontal/Small") should rank above primitives ("Spacing/2").
+// Component-internal tokens (4+ segments) are still heavily penalized.
+const PRIMITIVE_TOKEN_PATTERN = /\bprimitive\b/i;
+
+function tokenLevelScore(name: string): number {
   const segments = name.split("/").length;
   if (segments >= 4) return -30;
-  if (segments >= 3) return -10;
+  if (PRIMITIVE_TOKEN_PATTERN.test(name)) return -5;
   return 0;
 }
 
@@ -809,7 +823,7 @@ function classifyAlternative(
   score += nameScore * 10;
   if (scopeMatches) score += 5;
   score -= diff * 2;
-  score += depthPenalty(token.name);
+  score += tokenLevelScore(token.name);
 
   return { tier, difference: Math.round(diff * 100) / 100, score };
 }
@@ -879,7 +893,7 @@ function findRankedTokens(
       const nameScore = tokenNameRelevanceScore(entry.token.name, category);
       const scopeMatches = scopeMatchesCategory(entry.token.scopes, category);
       const tier: MatchTier = nameMatches || scopeMatches ? "close-right" : "close-other";
-      const score = nameScore * 10 + (scopeMatches ? 5 : 0) - entry.diff * 2 + depthPenalty(entry.token.name);
+      const score = nameScore * 10 + (scopeMatches ? 5 : 0) - entry.diff * 2 + tokenLevelScore(entry.token.name);
       candidates.push({
         token: entry.token,
         tier,
@@ -993,16 +1007,6 @@ async function applyFixes(
         updated[issue.paintIndex] = newPaint;
         (node as any)[issue.paintTarget] = updated;
         applied++;
-      } else if (issue.category === "font-size" || issue.category === "font-weight" || issue.category === "line-height") {
-        // Typography: use setRangeBoundVariable for text nodes
-        if (node.type === "TEXT") {
-          const tn = node as TextNode;
-          const field = issue.field as "fontSize" | "fontWeight" | "lineHeight";
-          (tn as any).setRangeBoundVariable(0, tn.characters.length, field, variable);
-        } else {
-          (node as any).setBoundVariable(issue.field as any, variable);
-        }
-        applied++;
       } else {
         // Spacing / radius: existing path
         (node as any).setBoundVariable(issue.field as any, variable);
@@ -1078,7 +1082,7 @@ async function runScan(): Promise<void> {
     return;
   }
 
-  figma.ui.postMessage({ type: "loading", message: "Scanning layers\u2026" });
+  figma.ui.postMessage({ type: "loading", message: "Scanning layers\u2026", hint: FIRST_RUN_HINT });
 
   currentScanResults = [];
   scanNode(selected, currentScanResults);
@@ -1090,7 +1094,8 @@ async function runScan(): Promise<void> {
 
   figma.ui.postMessage({
     type: "loading",
-    message: "Loading design tokens\u2026",
+    message: `Found ${currentScanResults.length} unbound values. Loading libraries\u2026`,
+    hint: FIRST_RUN_HINT,
   });
 
   const [localResult, teamResult] = await Promise.all([
@@ -1137,9 +1142,11 @@ async function runScan(): Promise<void> {
   }
 
   if (bestId !== LOCAL_LIBRARY_ID && !currentTokens.some((t) => t.libraryId === bestId)) {
+    const libName = currentLibraries.find((l) => l.id === bestId)?.name || "library";
     figma.ui.postMessage({
       type: "loading",
-      message: `Importing ${currentLibraries.find((l) => l.id === bestId)?.name || "library"} tokens\u2026`,
+      message: `Importing ${libName} tokens\u2026`,
+      hint: FIRST_RUN_HINT,
     });
     const refs = libraryVarRefs.filter((r) => r.libraryId === bestId);
     const importedTokens = await importLibraryTokens(bestId, refs);
@@ -1179,6 +1186,7 @@ figma.ui.onmessage = async (msg: any) => {
           figma.ui.postMessage({
             type: "loading",
             message: `Importing ${lib ? lib.name : "library"} tokens\u2026`,
+            hint: FIRST_RUN_HINT,
           });
           const refs = libraryVarRefs.filter((r) => r.libraryId === libId);
           const importedTokens = await importLibraryTokens(libId, refs);
@@ -1199,9 +1207,26 @@ figma.ui.onmessage = async (msg: any) => {
 
     case "apply": {
       const selectedIds = new Set(msg.issueIds as string[]);
+      const tokenOverrides: Record<string, { variableId: string; variableKey: string | null; source: string }> =
+        msg.tokenOverrides || {};
+
       const toApply = currentIssues.filter(
         (i) => selectedIds.has(i.id) && i.token
       );
+
+      for (const issue of toApply) {
+        const ov = tokenOverrides[issue.id];
+        if (!ov) continue;
+        if (ov.variableId === issue.token!.variableId) continue;
+        const altToken = issue.alternatives.find(
+          (a) => a.token.variableId === ov.variableId
+        );
+        if (altToken) {
+          issue.token = altToken.token;
+          issue.tier = altToken.tier;
+          issue.difference = altToken.difference;
+        }
+      }
 
       figma.ui.postMessage({
         type: "loading",

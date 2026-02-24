@@ -8,8 +8,8 @@ decisions are made, and how to extend it for other design systems.
 ## Overview
 
 The plugin scans a selected Figma frame for **hardcoded numeric values** on
-spacing and radius properties, matches them against **design system variable
-tokens**, and lets the user bind the correct token in one click.
+spacing, radius, and color properties, matches them against **design system
+variable tokens**, and lets the user bind the correct token in one click.
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌───────────────┐     ┌──────────┐
@@ -45,8 +45,24 @@ properties:
 | `bottomLeftRadius`   | `radius`        | Bottom-left corner radius|
 | `bottomRightRadius`  | `radius`        | Bottom-right corner radius|
 
-A property is flagged only if:
-- Its value is `> 0`
+### Color Properties (solid paints)
+
+| Property         | Plugin Category | Description                        |
+|------------------|-----------------|------------------------------------|
+| `fills` (frame)  | `fill`          | Background fills on frames/shapes  |
+| `fills` (text)   | `text-fill`     | Text color fills                   |
+| `strokes`        | `stroke`        | Stroke/border colors               |
+
+Color scanning rules:
+- Only `SOLID` paint types are checked
+- Paints with `visible === false` are skipped
+- Paints already bound to a color variable (`boundVariables.color`) are skipped
+- RGB values are compared with an epsilon of 0.02 per channel
+
+### General Scanning Rules
+
+A FLOAT/COLOR property is flagged only if:
+- Its value is `> 0` (spacing/radius) or is a valid solid color
 - It is **not** already bound to a variable (`boundVariables[field]` is empty)
 
 ---
@@ -55,8 +71,8 @@ A property is flagged only if:
 
 ### Local Variables
 
-All `FLOAT` variables from local variable collections are loaded immediately.
-They're grouped under a single "Local Variables" library entry.
+All `FLOAT` and `COLOR` variables from local variable collections are loaded
+immediately. They're grouped under a single "Local Variables" library entry.
 
 ### Team Library Variables
 
@@ -66,8 +82,33 @@ They're grouped under a single "Local Variables" library entry.
    "Foundations Library" appear as one dropdown entry.
 3. Variable metadata (key, resolvedType) is stored without importing.
 4. Actual import happens on demand: when a library is selected, its FLOAT
-   variables are imported in **parallel batches of 8** with a **5s timeout**
-   per variable.
+   and COLOR variables are imported in **parallel batches of 20** with a
+   **5s timeout** per variable.
+
+### Loading UX & Progress
+
+The plugin provides real-time progress feedback to prevent the UI from
+feeling stuck:
+
+| Stage | Message | When |
+|-------|---------|------|
+| Layer scan | `Scanning layers…` | Immediately on run |
+| Post-scan | `Found N unbound values. Loading libraries…` | After scan completes |
+| Collection discovery | `Discovering tokens… 2/5 collections` | Per-collection during `getTeamLibraries` |
+| Token import | `Importing Foundations Library tokens…` → `Importing tokens… 30/120` | Per-batch during import |
+
+All loading messages include a friendly first-run hint: *"First time takes
+a moment — after this it'll be snappy, promise!"* On subsequent runs,
+Figma's internal variable cache makes imports near-instant, so the hint
+barely appears.
+
+### Alias Resolution
+
+Design system libraries use **VariableAlias** objects for semantic tokens —
+a semantic token like `padding-horizontal/small` is an alias pointing to a
+primitive token like `primitive-spacing-8`. The plugin resolves these alias
+chains (up to 5 levels deep) to get the final numeric/color value while
+preserving the semantic token name for matching and display.
 
 ### Default Library
 
@@ -125,6 +166,17 @@ Neither the value nor the category is correct.
 
 These are **NOT** auto-selected and appear at the bottom of the dropdown.
 
+### Color Matching
+
+Color tokens use the same 4-tier system but compare RGB values instead of
+numeric distances. Two colors are considered matching if all three channels
+(R, G, B) are within an epsilon of 0.02. There is no "close match" for
+colors — a color either matches exactly or doesn't.
+
+For every color issue, the 5 nearest color alternatives (by RGB distance)
+are always included in the dropdown, ensuring the user always has options
+to choose from even when only one exact match exists.
+
 ### Far-Off Values (Relaxed Fallback)
 
 When a value has **no matches at all** within normal thresholds (e.g.
@@ -162,13 +214,15 @@ Rules are defined in `MATCH_RULES` in `src/code.ts`:
 
 ```typescript
 interface MatchRule {
-  category: Category;     // "padding-h" | "padding-v" | "gap" | "radius"
+  category: Category;     // "padding-h" | "padding-v" | "gap" | "radius" | "fill" | "text-fill" | "stroke"
   patterns: RegExp[];     // matched against token name (lowercase)
   priority: number;       // higher = preferred when multiple rules match
 }
 ```
 
 ### Current Rules (Personio Foundations Library)
+
+#### Spacing Rules
 
 | Priority | Category    | Patterns                                                  | Example Token Names              |
 |----------|-------------|-----------------------------------------------------------|----------------------------------|
@@ -181,6 +235,17 @@ interface MatchRule {
 | 2        | `padding-v` | `\bspacing\b`, `\bspace\b`                                | `primitive-spacing-4`           |
 | 2        | `gap`       | `\bspacing\b`, `\bspace\b`                                | `primitive-spacing-4`           |
 | 10       | `radius`    | `\bradius\b`, `\bradii\b`, `\bcorner\b`, `\bround\b`     | `radius/medium`                 |
+
+#### Color Rules
+
+| Priority | Category    | Patterns                                                  | Example Token Names              |
+|----------|-------------|-----------------------------------------------------------|----------------------------------|
+| 10       | `fill`      | `\bsurface\b`, `\bbackground\b`, `\bfill\b`, `\bhighlight\b` | `color/surface-default`     |
+| 10       | `text-fill` | `\bcontent\b`, `\btext\b`, `\bforeground\b`               | `color/content-primary`     |
+| 10       | `stroke`    | `\bstroke\b`, `\bborder\b`, `\boutline\b`                 | `color/stroke-default`      |
+| 2        | `fill`      | `\bcolor\b`                                               | `color/brand-primary`       |
+| 2        | `text-fill` | `\bcolor\b`                                               | `color/brand-primary`       |
+| 2        | `stroke`    | `\bcolor\b`                                               | `color/brand-primary`       |
 
 ### How Rules Are Applied
 
@@ -197,24 +262,42 @@ interface MatchRule {
 Within each tier, tokens are sorted by a composite score:
 
 ```
-score = (nameRelevancePriority × 10) + (scopeMatches ? 5 : 0) - (difference × 2) + depthPenalty
+score = (nameRelevancePriority × 10) + (scopeMatches ? 5 : 0) - (difference × 2) + tokenLevelScore
 ```
 
 Where:
 - `nameRelevancePriority`: highest matching rule priority for the field's category
-- `scopeMatches`: whether the token's Figma scope includes `GAP` (for spacing)
-  or `CORNER_RADIUS` (for radius). Note: `ALL_SCOPES` counts as a match for
-  normal classification, but is **ignored** in the relaxed fallback search
-  (`scopeStrictMatchesCategory`) to prevent unrelated tokens from appearing.
+- `scopeMatches`: whether the token's Figma scope includes the relevant scope
+  (`GAP` for spacing, `CORNER_RADIUS` for radius, `ALL_FILLS`/`FRAME_FILL`/etc.
+  for colors). `ALL_SCOPES` counts as a match for normal classification, but is
+  **ignored** in the relaxed fallback search (`scopeStrictMatchesCategory`) to
+  prevent unrelated tokens from appearing.
 - `difference`: absolute pixel difference from the scanned value
-- `depthPenalty`: penalty for deeply nested token paths (see below)
+- `tokenLevelScore`: semantic vs. primitive preference (see below)
 
-### Token Exclusion & Depth Penalty
+### Semantic vs. Primitive Token Preference
+
+Design system libraries publish both **semantic tokens** (context-aware names
+like `spacing/padding-horizontal/small`) and **primitive tokens** (raw scale
+values like `primitive-spacing-8`). Engineers should use semantic tokens in
+code, so the plugin ranks them higher.
+
+The `tokenLevelScore` function applies these adjustments:
+
+| Token Type | Condition | Score Adjustment |
+|------------|-----------|------------------|
+| Semantic (2-3 segments) | Normal naming | 0 (no penalty) |
+| Primitive | Name contains `primitive` | -5 |
+| Component-internal | 4+ path segments | -30 |
+
+This ensures semantic tokens rank above primitives when both have the same
+value, while component-internal tokens are effectively pushed to the bottom.
+
+### Token Exclusion
 
 Design system libraries often contain **component-internal variables** alongside
 the actual scale tokens. For example, `Components/Settings tile/Padding = 16px`
-is an internal component variable, not a reusable spacing token — but it
-contains "Padding" in its name and would falsely match.
+is an internal component variable, not a reusable spacing token.
 
 **Excluded entirely:**
 
@@ -223,20 +306,6 @@ Tokens whose names start with these prefixes are filtered out before matching:
 - `Component/`
 
 This is configured via `EXCLUDED_TOKEN_PATTERNS` in `src/code.ts`.
-
-**Depth penalty:**
-
-Tokens with deeply nested paths are penalized in scoring so that primitive
-and semantic tokens always rank above incidentally-named nested tokens:
-
-| Path Depth | Example                          | Penalty |
-|------------|----------------------------------|---------|
-| 1–2 segments | `Spacing/3`, `radius/medium`  | 0       |
-| 3 segments | `spacing/gap/medium`              | -10     |
-| 4+ segments | `Components/Card/Inner/Padding` | -30     |
-
-This ensures `Spacing/3pt5 = 14px` ranks above a deeply nested token like
-`Layouts/Card/Section/Gap = 14px` even if both match the name rules.
 
 ---
 
@@ -268,9 +337,9 @@ them as top recommendations.
 **Solution:** Two-layer defense:
 1. `EXCLUDED_TOKEN_PATTERNS` — hard-filter any token starting with
    `Components/` or `Component/` (never shown to the user)
-2. `depthPenalty` — tokens with deeply nested paths (3+ segments) get a
-   scoring penalty, so even if an edge-case slips through the filter, it
-   ranks below primitive scale tokens
+2. `tokenLevelScore` — tokens with deeply nested paths (4+ segments) get a
+   heavy scoring penalty (-30), so even if an edge-case slips through the
+   filter, it ranks below semantic and primitive scale tokens
 
 ### Challenge 3: Personio's Non-Linear Spacing Scale
 
@@ -279,7 +348,7 @@ Personio's spacing scale is base-4px but includes half-steps (`0.5 = 2px`,
 genuinely off-scale — it doesn't round neatly to the nearest 4px step. The
 closest tokens are `Spacing/3 = 12px` and `Spacing/3pt5 = 14px`.
 
-**Solution:** The off-scale UX (Tier 3) shows both nearest tokens with
+**Solution:** The off-scale UX (Tier 2) shows both nearest tokens with
 directional shift labels (`→ -1px` and `→ +1px`), an inline warning icon,
 and auto-selects the closest match so the designer can make an informed
 decision.
@@ -291,20 +360,35 @@ Personio has both **primitive** tokens (`primitive-spacing-4 = 4px`) and
 `paddingLeft = 8px`, the semantic `padding-horizontal/small` is the better
 recommendation — it communicates design intent to engineers.
 
-**Solution:** The priority system in `MATCH_RULES` gives specific semantic
-patterns (priority 10) much higher weight than generic `spacing/space`
-patterns (priority 2). The scoring formula amplifies this: `priority × 10`
-means a semantic match scores 100 points vs. a generic match's 20.
+**Solution:** The `tokenLevelScore` function penalizes tokens with `primitive`
+in the name (-5) and heavily penalizes deeply nested component-internal tokens
+(-30). Combined with the priority system in `MATCH_RULES` (specific semantic
+patterns at priority 10 vs. generic `spacing/space` at priority 2), semantic
+tokens consistently rank at the top.
 
-### Challenge 5: Library Import Performance
+### Challenge 5: Semantic Tokens Are VariableAliases
+
+Semantic tokens in the Foundations Library are implemented as `VariableAlias`
+objects pointing to primitive tokens. When imported, a semantic token's raw
+value is an alias reference, not a number. If the plugin only reads the raw
+value, semantic tokens get `null` values and are silently dropped.
+
+**Solution:** The `resolveAliasValue` function follows alias chains (up to 5
+levels deep) to extract the final numeric or color value. This is called during
+both local and library token loading, ensuring semantic tokens are available
+with their resolved values for matching.
+
+### Challenge 6: Library Import Performance
 
 The Foundations Library contains hundreds of variables across multiple
 collections. Importing them sequentially caused the plugin to hang
 indefinitely.
 
-**Solution:** Parallel batched imports (8 concurrent) with a 5-second
-per-variable timeout. Progress is streamed to the UI so the user sees
-real-time feedback instead of an infinite spinner.
+**Solution:** Parallel batched imports (20 concurrent) with a 5-second
+per-variable timeout. Progress is streamed to the UI at every stage
+(collection discovery, per-batch import counts) so the user sees real-time
+feedback instead of an infinite spinner. A friendly first-run hint reassures
+users that subsequent loads will be faster thanks to Figma's internal cache.
 
 ---
 
@@ -373,31 +457,56 @@ Based on the Personio Foundations Library (`personio-web` codebase):
 | `radius-huge`        | 24px  |
 | `radius-full`        | 9999px|
 
+### Color Token Categories
+
+| Token Name Pattern    | Use For               | Figma Scope         |
+|-----------------------|-----------------------|---------------------|
+| `color/surface-*`     | Background fills      | `FRAME_FILL`, `SHAPE_FILL` |
+| `color/content-*`     | Text / foreground     | `TEXT_FILL`         |
+| `color/stroke-*`      | Borders / strokes     | `STROKE_COLOR`      |
+| `color/brand-*`       | Brand colors          | Context-dependent   |
+| `color/input-*`       | Input field colors    | Context-dependent   |
+
 ---
 
 ## 7. UI Behavior Summary
 
+### Variable Token Issues
+
 | Scenario | Dropdown Color | Auto-checked? | Dropdown Groups |
 |----------|---------------|---------------|-----------------|
-| Exact match, right category | Green | Yes | "Recommended" / other groups as available |
-| Close match, right category | Amber + ⚠ | Yes | "Nearest (right category)" / "Exact value, different category" / etc. |
-| Exact match, wrong category | Red | No | "Exact value, different category" / other groups |
-| Close match, wrong category | Red + ⚠ | No | "Nearest (different category)" / other groups |
-| Far-off value (relaxed fallback) | Amber/Red + ⚠ | Depends on category match | "Nearest (right category)" / "Nearest (different category)" |
+| Exact match, right category | Green | Yes | "Exact match" / other groups as available |
+| Close match, right category | Amber + ⚠ | Yes | "Nearest value" / "Exact value, different property" / etc. |
+| Exact match, wrong category | Red | No | "Exact value, different property" / other groups |
+| Close match, wrong category | Red + ⚠ | No | "Nearest value, different property" / other groups |
+| Far-off value (relaxed fallback) | Amber/Red + ⚠ | Depends on category match | "Nearest value" / "Nearest value, different property" |
 | Single alternative only | Static label (no dropdown) | Depends on tier | N/A |
 | No match at all | Grey italic "no match" | No (disabled) | N/A |
 
-### Off-scale tooltip
+### Summary Pills
+
+| Pill | Color | Count |
+|------|-------|-------|
+| Exact | Green | Recommended tier matches |
+| Off-scale | Amber | Close, right category matches |
+| Wrong property | Red | Exact value, wrong category matches |
+| Off-scale (wrong property) | Red | Close value, wrong category matches |
+| No match | Red | No alternatives found |
+
+### Off-scale Tooltip
 
 The ⚠ icon uses a custom CSS tooltip (no browser delay) positioned above the
 icon. It reads: *"Xpx is not on the spacing scale. Applying will shift the
 value by ±Npx."*
 
-### User overrides
+### User Overrides
 
 Every issue row with alternatives shows a `<select>` dropdown. Picking a
 different token updates the issue in-place and adjusts the checkbox state.
-All overrides are preserved until Rescan or Apply.
+All overrides are preserved until Rescan or Apply. When Apply is clicked,
+the UI sends `tokenOverrides` mapping each issue ID to the selected token's
+`variableId`, ensuring the sandbox applies the user's choice rather than
+the auto-pick.
 
 ---
 
@@ -437,6 +546,21 @@ Example for a system that uses `space-inline-*` for horizontal and
 },
 ```
 
+For color tokens with different naming:
+
+```typescript
+{
+  category: "fill",
+  patterns: [/\bbg\b/, /\bbackground\b/],
+  priority: 10,
+},
+{
+  category: "text-fill",
+  patterns: [/\bfg\b/, /\btext\b/],
+  priority: 10,
+},
+```
+
 ### Step 3: Update `EXCLUDED_TOKEN_PATTERNS`
 
 If your library has component-internal variables under a different prefix:
@@ -456,9 +580,42 @@ const CLOSE_THRESHOLD = 3;  // max px diff for "close" tier
 const ALT_MAX_DIFF = 8;     // max px diff to show in dropdown at all
 ```
 
+### Step 5: Rebuild
+
+```bash
+npm run build
+```
+
 ---
 
-## 9. File Structure
+## 9. Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ runScan()                                                           │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  scanNode(selected)           → ScanResult[]  (spacing/radius/color)│
+│                                                                     │
+│  ┌── parallel ──────────────────────────────────────────────┐       │
+│  │ getLocalTokens()           → TokenInfo[]                  │       │
+│  │ getTeamLibraries()         → LibraryInfo[] + LibVarRef[]  │       │
+│  └───────────────────────────────────────────────────────────┘       │
+│                                                                     │
+│  importLibraryTokens()        → TokenInfo[]  (on-demand, batched)   │
+│                                                                     │
+│  matchIssues()                → IssueInfo[]  (4-tier ranked)        │
+│                                                                     │
+│  → postMessage("scan-complete", { issues })                         │
+├─────────────────────────────────────────────────────────────────────┤
+│ apply                                                               │
+│  applyFixes(issues)           → setBoundVariable / setBoundVar...   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 10. File Structure
 
 ```
 manifest.json          Figma plugin manifest (includes teamlibrary permission)
@@ -471,14 +628,17 @@ README.md              Quick start guide
 
 ---
 
-## 10. Key Constants
+## 11. Key Constants
 
 | Constant                   | Value                  | Purpose                                         |
 |----------------------------|------------------------|--------------------------------------------------|
-| `BATCH_SIZE`               | `8`                    | Parallel import batch size                        |
+| `BATCH_SIZE`               | `20`                   | Parallel import batch size                        |
 | `PER_VAR_TIMEOUT_MS`       | `5000`                 | Timeout per variable import (ms)                  |
 | `CLOSE_THRESHOLD`          | `3`                    | Max px diff for "close" tier                      |
 | `ALT_MAX_DIFF`             | `8`                    | Max px diff to include in alternatives            |
+| `COLOR_EPSILON`            | `0.02`                 | Max per-channel difference for color matching     |
 | `DEFAULT_LIBRARY_NAME`     | `"Foundations Library"` | Auto-selected library on first run                |
 | `STORAGE_KEY`              | `"preferredLibrary"`   | clientStorage key for remembering selection        |
 | `EXCLUDED_TOKEN_PATTERNS`  | `[/^components?\//i]`  | Regex patterns to exclude component-internal tokens|
+| `PRIMITIVE_TOKEN_PATTERN`  | `/\bprimitive\b/i`     | Pattern to identify primitive tokens for scoring  |
+| `FIRST_RUN_HINT`           | (friendly message)     | Shown during all loading stages on first run      |
