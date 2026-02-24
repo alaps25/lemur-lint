@@ -77,10 +77,11 @@ the preferred library.
 
 ---
 
-## 3. Token Matching — The 3-Tier System
+## 3. Token Matching — The 4-Tier System
 
-This is the core of the plugin. Each scanned value is matched against all
-tokens in the selected library and classified into one of three tiers:
+This is the core of the plugin. Category correctness is prioritized over
+value exactness. Each scanned value is matched against all tokens in the
+selected library and classified into one of four tiers:
 
 ### Tier 1: Recommended (Green)
 
@@ -127,10 +128,19 @@ These are **NOT** auto-selected and appear at the bottom of the dropdown.
 ### Far-Off Values (Relaxed Fallback)
 
 When a value has **no matches at all** within normal thresholds (e.g.
-`borderRadius = 999px`), the plugin performs a relaxed search across all
-tokens and shows the 5 nearest results regardless of distance. These appear
-with appropriate tier labels and the ⚠ warning. This ensures every issue
-row is actionable.
+`borderRadius = 999px`), the plugin performs a relaxed search:
+
+1. Filters to **same-category tokens only** using name matching and strict
+   scope matching (ignores `ALL_SCOPES` to prevent unrelated tokens like
+   "Viewport Size" from appearing).
+2. Picks the **5 nearest** by numeric distance.
+3. Always includes the **largest** same-category token — since very large
+   values often mean "max out this property" (e.g. `999px` radius →
+   `radius-full = 9999px`).
+4. Only falls back to cross-category tokens if zero same-category tokens
+   exist.
+
+This ensures every issue row is actionable with relevant suggestions.
 
 ### Excluded
 
@@ -175,10 +185,11 @@ interface MatchRule {
 ### How Rules Are Applied
 
 1. For each token, the name is lowercased and tested against all rules.
-2. If any rule for the **field's category** matches, the token qualifies for
-   "recommended" tier (assuming exact value match).
-3. If rules match but for a **different category**, it's "exact-other" tier.
-4. The `priority` value is used to sort within a tier — a `padding-horizontal`
+2. If any rule for the **field's category** matches + exact value → "recommended".
+3. If any rule for the **field's category** matches + close value → "close-right".
+4. If rules match but for a **different category** + exact value → "exact-other".
+5. If rules match but for a **different category** + close value → "close-other".
+6. The `priority` value is used to sort within a tier — a `padding-horizontal`
    match (priority 10) ranks above a generic `spacing` match (priority 2).
 
 ### Scoring Formula
@@ -192,7 +203,9 @@ score = (nameRelevancePriority × 10) + (scopeMatches ? 5 : 0) - (difference × 
 Where:
 - `nameRelevancePriority`: highest matching rule priority for the field's category
 - `scopeMatches`: whether the token's Figma scope includes `GAP` (for spacing)
-  or `CORNER_RADIUS` (for radius)
+  or `CORNER_RADIUS` (for radius). Note: `ALL_SCOPES` counts as a match for
+  normal classification, but is **ignored** in the relaxed fallback search
+  (`scopeStrictMatchesCategory`) to prevent unrelated tokens from appearing.
 - `difference`: absolute pixel difference from the scanned value
 - `depthPenalty`: penalty for deeply nested token paths (see below)
 

@@ -482,6 +482,21 @@ function scopeMatchesCategory(scopes: string[], category: Category): boolean {
   }
 }
 
+// Strict scope check for fallback — ignores ALL_SCOPES so only tokens with
+// an explicit category-specific scope (GAP, CORNER_RADIUS) qualify.
+function scopeStrictMatchesCategory(scopes: string[], category: Category): boolean {
+  switch (category) {
+    case "padding-h":
+    case "padding-v":
+    case "gap":
+      return scopes.includes("GAP");
+    case "radius":
+      return scopes.includes("CORNER_RADIUS");
+    default:
+      return false;
+  }
+}
+
 // Tokens whose names match these patterns are component-internal variables,
 // not design system scale tokens. They should be excluded from matching.
 const EXCLUDED_TOKEN_PATTERNS: RegExp[] = [
@@ -566,21 +581,46 @@ function findRankedTokens(
   };
 
   // Relaxed fallback: when no alternatives found within normal thresholds,
-  // find the nearest tokens from the full set (e.g. 999px → radius-full = 9999px)
+  // find the nearest tokens from the full set (e.g. 999px → radius-full = 9999px).
+  // Prioritize same-category tokens; only include other-category if none found.
   if (candidates.length === 0) {
     const FALLBACK_LIMIT = 5;
-    const sorted = tokens
-      .filter((t) => !isExcludedToken(t.name))
+    const eligible = tokens.filter((t) => !isExcludedToken(t.name));
+
+    const sameCatTokens = eligible
+      .filter((t) => tokenNameMatchesCategory(t.name, category) || scopeStrictMatchesCategory(t.scopes, category));
+
+    const sameCatNearest = sameCatTokens
       .map((t) => ({ token: t, diff: Math.abs(t.value - value) }))
       .sort((a, b) => a.diff - b.diff)
       .slice(0, FALLBACK_LIMIT);
 
-    for (const entry of sorted) {
+    // For large outlier values, also include the max token in the same category
+    // (e.g. radius-full = 9999px for a 999px radius). This handles the common
+    // "designer meant max/full" intent.
+    const maxToken = sameCatTokens.reduce<TokenInfo | null>(
+      (best, t) => (!best || t.value > best.value) ? t : best, null
+    );
+    const alreadyIncluded = maxToken && sameCatNearest.some(
+      (e) => e.token.variableId === maxToken.variableId
+    );
+    if (maxToken && !alreadyIncluded) {
+      sameCatNearest.push({ token: maxToken, diff: Math.abs(maxToken.value - value) });
+    }
+
+    const fallbackList = sameCatNearest.length > 0
+      ? sameCatNearest
+      : eligible
+          .map((t) => ({ token: t, diff: Math.abs(t.value - value) }))
+          .sort((a, b) => a.diff - b.diff)
+          .slice(0, FALLBACK_LIMIT);
+
+    for (const entry of fallbackList) {
       const nameMatches = tokenNameMatchesCategory(entry.token.name, category);
       const nameScore = tokenNameRelevanceScore(entry.token.name, category);
       const scopeMatches = scopeMatchesCategory(entry.token.scopes, category);
-      const tier: MatchTier = nameMatches ? "close-right" : "close-other";
-      let score = nameScore * 10 + (scopeMatches ? 5 : 0) - entry.diff * 2 + depthPenalty(entry.token.name);
+      const tier: MatchTier = nameMatches || scopeMatches ? "close-right" : "close-other";
+      const score = nameScore * 10 + (scopeMatches ? 5 : 0) - entry.diff * 2 + depthPenalty(entry.token.name);
       candidates.push({
         token: entry.token,
         tier,
