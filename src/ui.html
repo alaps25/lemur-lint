@@ -537,18 +537,19 @@ function renderResults() {
   var catLabels = { "padding-h": "Horizontal Padding", "padding-v": "Vertical Padding", gap: "Gap / Spacing", radius: "Border Radius" };
   issues.forEach(function (i) { cats[i.category].push(i); });
 
-  var recommended = 0, exactOther = 0, offScale = 0, none = 0;
+  var recommended = 0, closeRight = 0, exactOther = 0, closeOther = 0, none = 0;
   issues.forEach(function (i) {
     if (i.tier === "recommended") recommended++;
+    else if (i.tier === "close-right") closeRight++;
     else if (i.tier === "exact-other") exactOther++;
-    else if (i.tier === "close") offScale++;
+    else if (i.tier === "close-other") closeOther++;
     else none++;
   });
 
-  // Auto-select: recommended, exact-other, and off-scale (close with no exact)
+  // Auto-select: recommended and close-right (category correctness matters most)
   if (state.selectedIds.size === 0 && state._autoSelect) {
     issues.forEach(function (i) {
-      if (i.token && (i.tier === "recommended" || i.tier === "exact-other" || i.tier === "close"))
+      if (i.token && (i.tier === "recommended" || i.tier === "close-right"))
         state.selectedIds.add(i.id);
     });
     state._autoSelect = false;
@@ -586,14 +587,15 @@ function renderResults() {
   // Summary pills
   h += '<div class="summary">';
   if (recommended) h += '<span class="pill exact"><span class="pill-dot"></span>' + recommended + " recommended</span>";
-  if (exactOther) h += '<span class="pill close"><span class="pill-dot"></span>' + exactOther + " exact (diff category)</span>";
-  if (offScale) h += '<span class="pill none"><span class="pill-dot"></span>' + offScale + " off-scale</span>";
+  if (closeRight) h += '<span class="pill close"><span class="pill-dot"></span>' + closeRight + " off-scale</span>";
+  if (exactOther) h += '<span class="pill none"><span class="pill-dot"></span>' + exactOther + " wrong category</span>";
+  if (closeOther) h += '<span class="pill none"><span class="pill-dot"></span>' + closeOther + " off-scale (wrong cat)</span>";
   if (none)  h += '<span class="pill none"><span class="pill-dot"></span>'  + none  + " no match</span>";
   h += "</div>";
 
-  // Select-all (recommended + exact-other + off-scale are fixable)
+  // Select-all: recommended + close-right are auto-fixable
   var fixable = issues.filter(function (i) {
-    return i.token && (i.tier === "recommended" || i.tier === "exact-other" || i.tier === "close");
+    return i.token && (i.tier === "recommended" || i.tier === "close-right");
   });
   var allChecked = fixable.length > 0 && fixable.every(function (i) {
     return state.selectedIds.has(i.id);
@@ -632,7 +634,8 @@ function renderResults() {
 
 function tierToCss(tier) {
   if (tier === "recommended") return "";
-  if (tier === "exact-other") return " close";
+  if (tier === "close-right") return " close";
+  if (tier === "exact-other") return " none";
   return " none";
 }
 
@@ -646,103 +649,44 @@ function renderIssue(issue) {
   var hasToken = !!issue.token;
   var tier = issue.tier;
   var checked = state.selectedIds.has(issue.id);
-  var fixable = tier === "recommended" || tier === "exact-other";
   var alts = issue.alternatives || [];
 
   var recAlts = alts.filter(function (a) { return a.tier === "recommended"; });
-  var exactAlts = alts.filter(function (a) { return a.tier === "exact-other"; });
-  var closeAlts = alts.filter(function (a) { return a.tier === "close"; });
-  var isOffScale = recAlts.length === 0 && exactAlts.length === 0 && closeAlts.length > 0;
+  var closeRightAlts = alts.filter(function (a) { return a.tier === "close-right"; });
+  var exactOtherAlts = alts.filter(function (a) { return a.tier === "exact-other"; });
+  var closeOtherAlts = alts.filter(function (a) { return a.tier === "close-other"; });
 
-  var disabled = !hasToken || (!fixable && !isOffScale);
+  var isAutoFixable = tier === "recommended" || tier === "close-right";
+  var isOffScale = tier === "close-right" || tier === "close-other";
+  var disabled = !hasToken || (!isAutoFixable && tier !== "exact-other" && tier !== "close-other");
 
   var tokenHtml;
 
-  if (isOffScale && hasToken) {
-    var selectCls = "token-select has-alts close";
-    var nameMatchAlts = closeAlts.filter(function (a) {
-      return a.score > 0;
-    });
-    var otherAlts = closeAlts.filter(function (a) {
-      return a.score <= 0;
-    });
-    var hasGroups = nameMatchAlts.length > 0 && otherAlts.length > 0;
-    var selectedDelta = issue.token.value - issue.currentValue;
-    var shiftDir = selectedDelta > 0 ? "+" + selectedDelta : String(selectedDelta);
-    var tooltipText = issue.currentValue + "px is not on the spacing scale. Applying will shift the value by " + shiftDir + "px.";
-
-    tokenHtml = '<span class="val-arrow">\u2192</span>' +
-      '<select class="' + selectCls + '" onchange="overrideToken(\'' + issue.id + '\', this.value); event.stopPropagation();">';
-
-    if (hasGroups) {
-      tokenHtml += '<optgroup label="Nearest tokens">';
-      nameMatchAlts.forEach(function (alt) {
-        var idx = alts.indexOf(alt);
-        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-          esc(alt.token.name) + " = " + alt.token.value + "px" +
-          shiftLabel(issue.currentValue, alt.token.value) + "</option>";
-      });
-      tokenHtml += '</optgroup><optgroup label="Other values">';
-      otherAlts.forEach(function (alt) {
-        var idx = alts.indexOf(alt);
-        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-          esc(alt.token.name) + " = " + alt.token.value + "px" +
-          shiftLabel(issue.currentValue, alt.token.value) + "</option>";
-      });
-      tokenHtml += "</optgroup>";
-    } else {
-      closeAlts.forEach(function (alt) {
-        var idx = alts.indexOf(alt);
-        var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-          esc(alt.token.name) + " = " + alt.token.value + "px" +
-          shiftLabel(issue.currentValue, alt.token.value) + "</option>";
-      });
-    }
-    tokenHtml += '</select><span class="off-scale-icon">\u26A0<span class="tip">' + esc(tooltipText) + '</span></span>';
-
-  } else if (alts.length > 1 && hasToken) {
-    // Normal case: has exact matches (recommended or exact-other)
+  if (alts.length > 1 && hasToken) {
     var selectCls = "token-select has-alts" + tierToCss(tier);
-    var hasSections = (recAlts.length > 0) + (exactAlts.length > 0) + (closeAlts.length > 0) > 1;
+
+    var groups = [];
+    if (recAlts.length > 0) groups.push({ label: "Recommended", alts: recAlts, showShift: false });
+    if (closeRightAlts.length > 0) groups.push({ label: "Nearest (right category)", alts: closeRightAlts, showShift: true });
+    if (exactOtherAlts.length > 0) groups.push({ label: "Exact value, different category", alts: exactOtherAlts, showShift: false });
+    if (closeOtherAlts.length > 0) groups.push({ label: "Nearest (different category)", alts: closeOtherAlts, showShift: true });
+    var hasSections = groups.length > 1;
 
     tokenHtml = '<span class="val-arrow">\u2192</span>' +
       '<select class="' + selectCls + '" onchange="overrideToken(\'' + issue.id + '\', this.value); event.stopPropagation();">';
 
     if (hasSections) {
-      if (recAlts.length > 0) {
-        tokenHtml += '<optgroup label="Recommended">';
-        recAlts.forEach(function (alt) {
+      groups.forEach(function (group) {
+        tokenHtml += '<optgroup label="' + group.label + '">';
+        group.alts.forEach(function (alt) {
           var idx = alts.indexOf(alt);
           var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
+          var shift = group.showShift ? shiftLabel(issue.currentValue, alt.token.value) : "";
           tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-            esc(alt.token.name) + " = " + alt.token.value + "px</option>";
+            esc(alt.token.name) + " = " + alt.token.value + "px" + shift + "</option>";
         });
         tokenHtml += "</optgroup>";
-      }
-      if (exactAlts.length > 0) {
-        tokenHtml += '<optgroup label="Exact value, different category">';
-        exactAlts.forEach(function (alt) {
-          var idx = alts.indexOf(alt);
-          var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-          tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-            esc(alt.token.name) + " = " + alt.token.value + "px</option>";
-        });
-        tokenHtml += "</optgroup>";
-      }
-      if (closeAlts.length > 0) {
-        tokenHtml += '<optgroup label="Close matches">';
-        closeAlts.forEach(function (alt) {
-          var idx = alts.indexOf(alt);
-          var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-          tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-            esc(alt.token.name) + " = " + alt.token.value + "px" +
-            shiftLabel(issue.currentValue, alt.token.value) + "</option>";
-        });
-        tokenHtml += "</optgroup>";
-      }
+      });
     } else {
       alts.forEach(function (alt) {
         var idx = alts.indexOf(alt);
@@ -754,24 +698,41 @@ function renderIssue(issue) {
     }
     tokenHtml += "</select>";
 
-  } else if (tier === "recommended") {
+    if (isOffScale) {
+      var selectedDelta = issue.token.value - issue.currentValue;
+      var shiftDir = selectedDelta > 0 ? "+" + selectedDelta : String(selectedDelta);
+      var tooltipText = issue.currentValue + "px is not on the design scale. Applying will shift the value by " + shiftDir + "px.";
+      tokenHtml += '<span class="off-scale-icon">\u26A0<span class="tip">' + esc(tooltipText) + '</span></span>';
+    }
+
+  } else if (hasToken && tier === "recommended") {
     tokenHtml =
       '<span class="val-arrow">\u2192</span>' +
       '<span class="val-token exact">' + esc(issue.token.name) + "</span>";
-  } else if (tier === "exact-other") {
-    tokenHtml =
-      '<span class="val-arrow">\u2192</span>' +
-      '<span class="val-token close">' + esc(issue.token.name) + "</span>";
-  } else if (tier === "close" && hasToken) {
+  } else if (hasToken && tier === "close-right") {
     var singleDelta = issue.token.value - issue.currentValue;
     var singleDir = singleDelta > 0 ? "+" + singleDelta : String(singleDelta);
-    var singleTip = issue.currentValue + "px is not on the spacing scale. Applying will shift the value by " + singleDir + "px.";
+    var singleTip = issue.currentValue + "px is not on the design scale. Applying will shift the value by " + singleDir + "px.";
     tokenHtml =
       '<span class="val-arrow">\u2192</span>' +
       '<span class="val-token close">' + esc(issue.token.name) +
         " = " + issue.token.value + "px" +
         shiftLabel(issue.currentValue, issue.token.value) + "</span>" +
       '<span class="off-scale-icon">\u26A0<span class="tip">' + esc(singleTip) + '</span></span>';
+  } else if (hasToken && tier === "exact-other") {
+    tokenHtml =
+      '<span class="val-arrow">\u2192</span>' +
+      '<span class="val-token none">' + esc(issue.token.name) + " (wrong category)</span>";
+  } else if (hasToken && (tier === "close-other")) {
+    var singleDelta2 = issue.token.value - issue.currentValue;
+    var singleDir2 = singleDelta2 > 0 ? "+" + singleDelta2 : String(singleDelta2);
+    var singleTip2 = issue.currentValue + "px is not on the design scale. Nearest token is a different category. Shift: " + singleDir2 + "px.";
+    tokenHtml =
+      '<span class="val-arrow">\u2192</span>' +
+      '<span class="val-token none">' + esc(issue.token.name) +
+        " = " + issue.token.value + "px" +
+        shiftLabel(issue.currentValue, issue.token.value) + "</span>" +
+      '<span class="off-scale-icon">\u26A0<span class="tip">' + esc(singleTip2) + '</span></span>';
   } else {
     tokenHtml = '<span class="val-token none">no match</span>';
   }
@@ -834,7 +795,7 @@ function overrideToken(issueId, altIndexStr) {
 function toggleAll(checked) {
   if (checked) {
     state.issues.forEach(function (i) {
-      if (i.token && (i.tier === "recommended" || i.tier === "exact-other" || i.tier === "close"))
+      if (i.token && (i.tier === "recommended" || i.tier === "close-right"))
         state.selectedIds.add(i.id);
     });
   } else {

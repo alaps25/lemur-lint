@@ -89,43 +89,54 @@ tokens in the selected library and classified into one of three tiers:
 Example: `paddingLeft = 8px` matched with a token named
 `spacing/padding-horizontal/small` (value = 8).
 
-This is the ideal match — right value, right semantic purpose.
+This is the ideal match — right value, right semantic purpose. Auto-selected.
 
-### Tier 2: Exact Value, Different Category (Amber)
+### Tier 2: Close, Right Category (Amber + ⚠ icon)
+
+**Value is within ±3px and the token name matches the correct category.**
+
+Example: `paddingLeft = 13px` matched with `spacing/padding-horizontal/medium`
+(value = 12px, → -1px). The token is semantically correct even though the
+value isn't exact.
+
+These **are** auto-selected because category correctness matters more than
+exact value. The dropdown shows **directional shift labels** like `→ -1px`
+or `→ +1px` so the user knows exactly how the layout will change. A ⚠ icon
+with an instant tooltip explains the shift.
+
+### Tier 3: Exact Value, Wrong Category (Red)
 
 **Exact value match but the token name suggests a different purpose.**
 
-Example: `paddingLeft = 4px` matched with a token named `radius/extra-small`
-(value = 4). The number is right but the token is meant for radii, not padding.
+Example: `paddingLeft = 7px` matched with `radius/small` (value = 7). The
+number is right but the token is meant for radii, not padding.
 
-These are auto-selected because the value is correct, but the amber color
-warns the user to double-check.
+These are **NOT** auto-selected. The red color signals that while the value
+matches, binding this token would be semantically incorrect. The user must
+explicitly opt in.
 
-### Tier 3: Off-Scale / Close Match (Amber dropdown + ⚠ icon)
+### Tier 4: Close, Wrong Category (Red + ⚠ icon)
 
-**Value is within ±3px but not exact — the value is "off-scale".**
+**Value is within ±3px but the token is for a different category.**
 
-Example: `paddingLeft = 13px`. No token has value 13. Nearest tokens are
-`Spacing/3 = 12px (→ -1px)` and `Spacing/3pt5 = 14px (→ +1px)`.
+Example: `paddingLeft = 5px` matched with `radius/extra-small` (value = 4px).
+Neither the value nor the category is correct.
 
-These **are** auto-selected (pre-checked) because the designer likely intended
-a nearby scale value. The dropdown shows **directional shift labels** like
-`→ -1px` or `→ +1px` so the user knows exactly how the layout will change.
+These are **NOT** auto-selected and appear at the bottom of the dropdown.
 
-A small ⚠ icon appears inline after the dropdown with an instant CSS tooltip:
-*"13px is not on the spacing scale. Applying will shift the value by -1px."*
+### Far-Off Values (Relaxed Fallback)
 
-The dropdown groups off-scale alternatives into:
-- **"Nearest tokens"** — tokens whose name matches the correct category
-- **"Other values"** — tokens from a different category (e.g. radius tokens)
+When a value has **no matches at all** within normal thresholds (e.g.
+`borderRadius = 999px`), the plugin performs a relaxed search across all
+tokens and shows the 5 nearest results regardless of distance. These appear
+with appropriate tier labels and the ⚠ warning. This ensures every issue
+row is actionable.
 
 ### Excluded
 
-- Tokens more than ±3px away from the scanned value are excluded from
-  alternatives (beyond the close threshold)
-- Tokens more than ±8px away are excluded from consideration entirely
-  (`ALT_MAX_DIFF`)
 - **Component-internal tokens** are always excluded (see section 5 below)
+- Beyond the relaxed fallback, tokens that don't meet any tier criteria are
+  excluded
 
 ---
 
@@ -355,9 +366,11 @@ Based on the Personio Foundations Library (`personio-web` codebase):
 
 | Scenario | Dropdown Color | Auto-checked? | Dropdown Groups |
 |----------|---------------|---------------|-----------------|
-| Exact match, right category | Green | Yes | "Recommended" / "Exact value, different category" / "Close matches" |
-| Exact match, wrong category | Amber | Yes | Same as above |
-| Off-scale (no exact match) | Amber + ⚠ icon | Yes | "Nearest tokens" / "Other values" |
+| Exact match, right category | Green | Yes | "Recommended" / other groups as available |
+| Close match, right category | Amber + ⚠ | Yes | "Nearest (right category)" / "Exact value, different category" / etc. |
+| Exact match, wrong category | Red | No | "Exact value, different category" / other groups |
+| Close match, wrong category | Red + ⚠ | No | "Nearest (different category)" / other groups |
+| Far-off value (relaxed fallback) | Amber/Red + ⚠ | Depends on category match | "Nearest (right category)" / "Nearest (different category)" |
 | Single alternative only | Static label (no dropdown) | Depends on tier | N/A |
 | No match at all | Grey italic "no match" | No (disabled) | N/A |
 

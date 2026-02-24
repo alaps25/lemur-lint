@@ -41,7 +41,7 @@ interface LibraryInfo {
   collectionKeys: string[];
 }
 
-type MatchTier = "recommended" | "exact-other" | "close";
+type MatchTier = "recommended" | "close-right" | "exact-other" | "close-other";
 
 interface TokenAlternative {
   token: TokenInfo;
@@ -432,14 +432,18 @@ async function importLibraryTokens(
 }
 
 // ---------------------------------------------------------------------------
-// Token matching — 3-tier system
+// Token matching — 4-tier system (category correctness > value exactness)
 //
-// Tier 1: "recommended"  — exact value + name matches the right category
-// Tier 2: "exact-other"  — exact value but name suggests different category
-// Tier 3: "close"        — value within ±CLOSE_THRESHOLD
+// Tier 1: "recommended"   — exact value + name matches the right category
+// Tier 2: "close-right"   — close value (±CLOSE_THRESHOLD) + right category
+// Tier 3: "exact-other"   — exact value but wrong category
+// Tier 4: "close-other"   — close value + wrong category
 //
 // Within each tier, tokens are sorted by relevance score.
 // Tokens beyond ALT_MAX_DIFF are excluded entirely.
+//
+// When NO alternatives are found within normal thresholds, we do a relaxed
+// search across all tokens to find the nearest matches (for values like 999px).
 // ---------------------------------------------------------------------------
 
 function tokenNameMatchesCategory(name: string, category: Category): boolean {
@@ -517,10 +521,12 @@ function classifyAlternative(
   let tier: MatchTier;
   if (isExact && nameMatches) {
     tier = "recommended";
+  } else if (isClose && nameMatches) {
+    tier = "close-right";
   } else if (isExact) {
     tier = "exact-other";
   } else if (isClose) {
-    tier = "close";
+    tier = "close-other";
   } else {
     return null;
   }
@@ -554,9 +560,35 @@ function findRankedTokens(
 
   const tierOrder: Record<MatchTier, number> = {
     recommended: 0,
-    "exact-other": 1,
-    close: 2,
+    "close-right": 1,
+    "exact-other": 2,
+    "close-other": 3,
   };
+
+  // Relaxed fallback: when no alternatives found within normal thresholds,
+  // find the nearest tokens from the full set (e.g. 999px → radius-full = 9999px)
+  if (candidates.length === 0) {
+    const FALLBACK_LIMIT = 5;
+    const sorted = tokens
+      .filter((t) => !isExcludedToken(t.name))
+      .map((t) => ({ token: t, diff: Math.abs(t.value - value) }))
+      .sort((a, b) => a.diff - b.diff)
+      .slice(0, FALLBACK_LIMIT);
+
+    for (const entry of sorted) {
+      const nameMatches = tokenNameMatchesCategory(entry.token.name, category);
+      const nameScore = tokenNameRelevanceScore(entry.token.name, category);
+      const scopeMatches = scopeMatchesCategory(entry.token.scopes, category);
+      const tier: MatchTier = nameMatches ? "close-right" : "close-other";
+      let score = nameScore * 10 + (scopeMatches ? 5 : 0) - entry.diff * 2 + depthPenalty(entry.token.name);
+      candidates.push({
+        token: entry.token,
+        tier,
+        difference: Math.round(entry.diff * 100) / 100,
+        score,
+      });
+    }
+  }
 
   candidates.sort((a, b) => {
     const tierDiff = tierOrder[a.tier] - tierOrder[b.tier];

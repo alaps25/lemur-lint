@@ -35,8 +35,9 @@ npm run build
 | Tier | Color | Meaning | Auto-selected? |
 |------|-------|---------|----------------|
 | **Recommended** | Green | Exact value + token name matches the right category (e.g. `padding-horizontal` token for `paddingLeft`) | Yes |
-| **Exact, different category** | Amber | Exact value but token is for a different purpose (e.g. `radius` token for a padding field) | Yes (with warning) |
-| **Off-scale / Close (±1–3px)** | Amber + ⚠ | Value not on the DS scale — nearest tokens shown with shift labels (e.g. `→ -1px`) | Yes (pre-checked) |
+| **Close, right category** | Amber + ⚠ | Off-scale value but nearest token is the right category — shift labels show `→ -1px` etc. | Yes |
+| **Exact, wrong category** | Red | Exact value but token is for a different purpose (e.g. `radius` token for a padding field) | No — manual opt-in |
+| **Close, wrong category** | Red + ⚠ | Off-scale value and nearest token is a different category | No — manual opt-in |
 
 Each issue row has a **dropdown** showing all alternatives grouped by tier,
 so you can override the auto-pick if needed.
