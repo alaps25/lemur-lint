@@ -259,6 +259,14 @@
     white-space: nowrap;
   }
   .val-arrow { color: var(--text-tertiary); font-size: 10px; }
+  .color-swatch {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
   .val-token {
     font-family: var(--mono);
     font-size: 10px;
@@ -451,6 +459,22 @@ function post(msg) {
   parent.postMessage({ pluginMessage: msg }, "*");
 }
 
+function toHex(c) {
+  if (!c) return "#000000";
+  var r = Math.round(c.r * 255).toString(16).padStart(2, "0");
+  var g = Math.round(c.g * 255).toString(16).padStart(2, "0");
+  var b = Math.round(c.b * 255).toString(16).padStart(2, "0");
+  return "#" + r + g + b;
+}
+
+function swatchHtml(c) {
+  return '<span class="color-swatch" style="background:' + toHex(c) + '"></span>';
+}
+
+function isColorCategory(cat) {
+  return cat === "fill" || cat === "text-fill" || cat === "stroke";
+}
+
 // ---------------------------------------------------------------------------
 // Render router
 // ---------------------------------------------------------------------------
@@ -533,9 +557,18 @@ function renderNoTokens() {
 // ---------------------------------------------------------------------------
 function renderResults() {
   var issues = state.issues;
-  var cats = { "padding-h": [], "padding-v": [], gap: [], radius: [] };
-  var catLabels = { "padding-h": "Horizontal Padding", "padding-v": "Vertical Padding", gap: "Gap / Spacing", radius: "Border Radius" };
-  issues.forEach(function (i) { cats[i.category].push(i); });
+  var cats = {
+    "padding-h": [], "padding-v": [], gap: [], radius: [],
+    fill: [], "text-fill": [], stroke: [],
+    "font-size": [], "font-weight": [], "line-height": []
+  };
+  var catLabels = {
+    "padding-h": "Horizontal Padding", "padding-v": "Vertical Padding",
+    gap: "Gap / Spacing", radius: "Border Radius",
+    fill: "Fill Color", "text-fill": "Text Color", stroke: "Stroke Color",
+    "font-size": "Font Size", "font-weight": "Font Weight", "line-height": "Line Height"
+  };
+  issues.forEach(function (i) { if (cats[i.category]) cats[i.category].push(i); });
 
   var recommended = 0, closeRight = 0, exactOther = 0, closeOther = 0, none = 0;
   issues.forEach(function (i) {
@@ -605,7 +638,7 @@ function renderResults() {
     ' onchange="toggleAll(this.checked)"> Select all fixable (' + fixable.length + ")</label>";
 
   // Categories
-  ["padding-h", "padding-v", "gap", "radius"].forEach(function (cat) {
+  ["padding-h", "padding-v", "gap", "radius", "fill", "text-fill", "stroke", "font-size", "font-weight", "line-height"].forEach(function (cat) {
     var list = cats[cat];
     if (!list.length) return;
     h += '<div class="cat"><div class="cat-header">' +
@@ -645,6 +678,18 @@ function shiftLabel(currentValue, tokenValue) {
   return delta > 0 ? " (\u2192 +" + delta + "px)" : " (\u2192 " + delta + "px)";
 }
 
+function tokenLabel(alt, issue) {
+  if (alt.token.tokenType === "color" && alt.token.color) {
+    return esc(alt.token.name) + " = " + toHex(alt.token.color);
+  }
+  return esc(alt.token.name) + " = " + alt.token.value + "px";
+}
+
+function tokenLabelWithShift(alt, issue) {
+  if (alt.token.tokenType === "color") return tokenLabel(alt, issue);
+  return tokenLabel(alt, issue) + shiftLabel(issue.currentValue, alt.token.value);
+}
+
 function renderIssue(issue) {
   var hasToken = !!issue.token;
   var tier = issue.tier;
@@ -681,9 +726,8 @@ function renderIssue(issue) {
         group.alts.forEach(function (alt) {
           var idx = alts.indexOf(alt);
           var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-          var shift = group.showShift ? shiftLabel(issue.currentValue, alt.token.value) : "";
-          tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-            esc(alt.token.name) + " = " + alt.token.value + "px" + shift + "</option>";
+          var label = group.showShift ? tokenLabelWithShift(alt, issue) : tokenLabel(alt, issue);
+          tokenHtml += '<option value="' + idx + '"' + selected + ">" + label + "</option>";
         });
         tokenHtml += "</optgroup>";
       });
@@ -691,9 +735,8 @@ function renderIssue(issue) {
       alts.forEach(function (alt) {
         var idx = alts.indexOf(alt);
         var selected = alt.token.variableId === issue.token.variableId ? " selected" : "";
-        var diffLabel = alt.difference > 0 ? shiftLabel(issue.currentValue, alt.token.value) : "";
-        tokenHtml += '<option value="' + idx + '"' + selected + ">" +
-          esc(alt.token.name) + " = " + alt.token.value + "px" + diffLabel + "</option>";
+        var label = alt.difference > 0 ? tokenLabelWithShift(alt, issue) : tokenLabel(alt, issue);
+        tokenHtml += '<option value="' + idx + '"' + selected + ">" + label + "</option>";
       });
     }
     tokenHtml += "</select>";
@@ -706,9 +749,12 @@ function renderIssue(issue) {
     }
 
   } else if (hasToken && tier === "recommended") {
+    var recLabel = issue.token.tokenType === "color" && issue.token.color
+      ? swatchHtml(issue.token.color) + " " + esc(issue.token.name)
+      : esc(issue.token.name);
     tokenHtml =
       '<span class="val-arrow">\u2192</span>' +
-      '<span class="val-token exact">' + esc(issue.token.name) + "</span>";
+      '<span class="val-token exact">' + recLabel + "</span>";
   } else if (hasToken && tier === "close-right") {
     var singleDelta = issue.token.value - issue.currentValue;
     var singleDir = singleDelta > 0 ? "+" + singleDelta : String(singleDelta);
@@ -737,6 +783,14 @@ function renderIssue(issue) {
     tokenHtml = '<span class="val-token none">no match</span>';
   }
 
+  var isColor = isColorCategory(issue.category);
+  var currentDisplay;
+  if (isColor && issue.currentColor) {
+    currentDisplay = swatchHtml(issue.currentColor) + ' <span class="val-current">' + toHex(issue.currentColor) + "</span>";
+  } else {
+    currentDisplay = '<span class="val-current">' + issue.currentValue + "px</span>";
+  }
+
   return '<label class="issue">' +
     '<input type="checkbox"' +
       (checked ? " checked" : "") +
@@ -748,7 +802,7 @@ function renderIssue(issue) {
         '<span class="issue-prop">/ ' + esc(issue.label) + "</span>" +
       "</div>" +
       '<div class="issue-vals">' +
-        '<span class="val-current">' + issue.currentValue + "px</span>" +
+        currentDisplay +
         tokenHtml +
       "</div>" +
     "</div></label>";

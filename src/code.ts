@@ -4,13 +4,20 @@ figma.showUI(__html__, { width: 460, height: 600, themeColors: true });
 // Types
 // ---------------------------------------------------------------------------
 
-type Category = "padding-h" | "padding-v" | "gap" | "radius";
+type Category =
+  | "padding-h" | "padding-v" | "gap" | "radius"
+  | "fill" | "text-fill" | "stroke"
+  | "font-size" | "font-weight" | "line-height";
+
+type ScanType = "float" | "color";
 
 interface FieldDef {
   field: string;
   label: string;
   category: Category;
 }
+
+interface ColorValue { r: number; g: number; b: number; a: number; }
 
 interface ScanResult {
   id: string;
@@ -19,7 +26,11 @@ interface ScanResult {
   field: string;
   label: string;
   category: Category;
+  scanType: ScanType;
   currentValue: number;
+  currentColor: ColorValue | null;
+  paintIndex: number;
+  paintTarget: "fills" | "strokes" | null;
 }
 
 interface TokenInfo {
@@ -27,6 +38,8 @@ interface TokenInfo {
   variableKey?: string;
   name: string;
   value: number;
+  color: ColorValue | null;
+  tokenType: "float" | "color";
   libraryId: string;
   collectionKey?: string;
   source: "local" | "library";
@@ -80,6 +93,12 @@ const RADIUS_FIELDS: FieldDef[] = [
   { field: "bottomRightRadius", label: "Bottom-Right Radius", category: "radius" },
 ];
 
+const TYPOGRAPHY_FIELDS: FieldDef[] = [
+  { field: "fontSize",   label: "Font Size",   category: "font-size" },
+  { field: "fontWeight",  label: "Font Weight",  category: "font-weight" },
+  { field: "lineHeight", label: "Line Height", category: "line-height" },
+];
+
 // ---------------------------------------------------------------------------
 // Token Matching Rules
 //
@@ -110,6 +129,17 @@ const RADIUS_FIELDS: FieldDef[] = [
 //   - radius-*                      → corner radius fields
 //   - primitive-spacing-*           → any spacing field (generic fallback)
 //   - primitive-radius-*            → any radius field (generic fallback)
+//
+// Color naming (Personio):
+//   - color/surface-*               → fill backgrounds
+//   - color/content-*               → text fills
+//   - color/stroke-*                → strokes / borders
+//   - color/brand-*, color/input-*  → context-dependent
+//
+// Typography naming (Personio):
+//   - font-sizes-*, font-size       → font size
+//   - font-weights-*, font-weight   → font weight
+//   - line-heights-*, line-height   → line height
 // ---------------------------------------------------------------------------
 
 interface MatchRule {
@@ -170,58 +200,178 @@ const MATCH_RULES: MatchRule[] = [
     patterns: [/\bradius\b/, /\bradii\b/, /\bcorner\b/, /\bround\b/],
     priority: 10,
   },
+  // --- Color rules ---
+  {
+    category: "fill",
+    patterns: [/\bsurface\b/, /\bbackground\b/, /\bfill\b/, /\bhighlight\b/],
+    priority: 10,
+  },
+  {
+    category: "text-fill",
+    patterns: [/\bcontent\b/, /\btext\b/, /\bforeground\b/],
+    priority: 10,
+  },
+  {
+    category: "stroke",
+    patterns: [/\bstroke\b/, /\bborder\b/, /\boutline\b/],
+    priority: 10,
+  },
+  {
+    category: "fill",
+    patterns: [/\bcolor\b/],
+    priority: 2,
+  },
+  {
+    category: "text-fill",
+    patterns: [/\bcolor\b/],
+    priority: 2,
+  },
+  {
+    category: "stroke",
+    patterns: [/\bcolor\b/],
+    priority: 2,
+  },
+  // --- Typography rules ---
+  {
+    category: "font-size",
+    patterns: [/font.?size/, /\btext.?size/, /\bfont.?sizes/],
+    priority: 10,
+  },
+  {
+    category: "font-size",
+    patterns: [/\btypography\b/],
+    priority: 2,
+  },
+  {
+    category: "font-weight",
+    patterns: [/font.?weight/, /\bweight/],
+    priority: 10,
+  },
+  {
+    category: "line-height",
+    patterns: [/line.?height/, /\bleading\b/, /\bline.?heights/],
+    priority: 10,
+  },
 ];
 
 const CLOSE_THRESHOLD = 3;
 const ALT_MAX_DIFF = 8;
 
 // ---------------------------------------------------------------------------
-// Scan — walk the tree and collect unbound numeric properties
+// Scan — walk the tree and collect unbound properties
 // ---------------------------------------------------------------------------
 
+function pushFloatResult(
+  results: ScanResult[], node: SceneNode, def: FieldDef, val: number
+): void {
+  results.push({
+    id: `${node.id}::${def.field}`,
+    nodeId: node.id,
+    nodeName: node.name,
+    field: def.field,
+    label: def.label,
+    category: def.category,
+    scanType: "float",
+    currentValue: val,
+    currentColor: null,
+    paintIndex: -1,
+    paintTarget: null,
+  });
+}
+
+function scanPaints(
+  node: SceneNode, results: ScanResult[],
+  target: "fills" | "strokes", category: Category, label: string
+): void {
+  const paints = (node as any)[target];
+  if (!Array.isArray(paints)) return;
+  for (let i = 0; i < paints.length; i++) {
+    const p = paints[i];
+    if (!p || p.type !== "SOLID") continue;
+    const bv = p.boundVariables;
+    if (bv && bv.color) continue;
+    const c = p.color;
+    if (!c) continue;
+    const opacity = typeof p.opacity === "number" ? p.opacity : 1;
+    results.push({
+      id: `${node.id}::${target}::${i}`,
+      nodeId: node.id,
+      nodeName: node.name,
+      field: `${target}::${i}`,
+      label: label,
+      category: category,
+      scanType: "color",
+      currentValue: 0,
+      currentColor: { r: c.r, g: c.g, b: c.b, a: opacity },
+      paintIndex: i,
+      paintTarget: target,
+    });
+  }
+}
+
 function scanNode(node: SceneNode, results: ScanResult[]): void {
+  // --- Spacing / auto-layout ---
   if ("layoutMode" in node && (node as FrameNode).layoutMode !== "NONE") {
     for (const def of AUTOLAYOUT_FIELDS) {
       const val = (node as any)[def.field];
       if (typeof val === "number" && val > 0) {
         const bv = (node as any).boundVariables;
         const bound = bv && bv[def.field];
-        if (!bound) {
-          results.push({
-            id: `${node.id}::${def.field}`,
-            nodeId: node.id,
-            nodeName: node.name,
-            field: def.field,
-            label: def.label,
-            category: def.category,
-            currentValue: val,
-          });
-        }
+        if (!bound) pushFloatResult(results, node, def, val);
       }
     }
   }
 
+  // --- Radius ---
   if ("topLeftRadius" in node) {
     for (const def of RADIUS_FIELDS) {
       const val = (node as any)[def.field];
       if (typeof val === "number" && val > 0) {
         const bv = (node as any).boundVariables;
         const bound = bv && bv[def.field];
-        if (!bound) {
-          results.push({
-            id: `${node.id}::${def.field}`,
-            nodeId: node.id,
-            nodeName: node.name,
-            field: def.field,
-            label: def.label,
-            category: def.category,
-            currentValue: val,
-          });
-        }
+        if (!bound) pushFloatResult(results, node, def, val);
       }
     }
   }
 
+  // --- Fill colors ---
+  const isText = node.type === "TEXT";
+  if ("fills" in node) {
+    scanPaints(node, results, "fills", isText ? "text-fill" : "fill",
+      isText ? "Text Color" : "Fill Color");
+  }
+
+  // --- Stroke colors ---
+  if ("strokes" in node) {
+    scanPaints(node, results, "strokes", "stroke", "Stroke Color");
+  }
+
+  // --- Typography (TextNode, uniform styles only) ---
+  if (isText) {
+    const tn = node as TextNode;
+    for (const def of TYPOGRAPHY_FIELDS) {
+      let val: number | undefined;
+
+      if (def.field === "lineHeight") {
+        const lh = tn.lineHeight;
+        if (lh && typeof lh === "object" && "value" in lh && lh.unit === "PIXELS") {
+          val = lh.value;
+        }
+      } else {
+        const raw = (tn as any)[def.field];
+        if (typeof raw === "number") val = raw;
+      }
+
+      if (val !== undefined && val > 0) {
+        const bv = (tn as any).boundVariables;
+        const bound = bv && bv[def.field];
+        const isBound = Array.isArray(bound) ? bound.length > 0 : !!bound;
+        if (!isBound) pushFloatResult(results, node, def, val);
+      }
+    }
+  }
+
+  // --- Recurse children ---
   if ("children" in node) {
     for (const child of (node as FrameNode).children) {
       scanNode(child, results);
@@ -235,6 +385,10 @@ function scanNode(node: SceneNode, results: ScanResult[]): void {
 
 const LOCAL_LIBRARY_ID = "__local__";
 
+function isRgb(val: any): val is { r: number; g: number; b: number } {
+  return val && typeof val.r === "number" && typeof val.g === "number" && typeof val.b === "number";
+}
+
 async function getLocalTokens(): Promise<{
   library: LibraryInfo | null;
   tokens: TokenInfo[];
@@ -245,19 +399,25 @@ async function getLocalTokens(): Promise<{
   for (const col of localCols) {
     for (const varId of col.variableIds) {
       const v = await figma.variables.getVariableByIdAsync(varId);
-      if (v && v.resolvedType === "FLOAT") {
-        const modeId = col.modes[0].modeId;
-        const rawValue = v.valuesByMode[modeId];
-        if (typeof rawValue === "number") {
-          tokens.push({
-            variableId: v.id,
-            name: v.name,
-            value: rawValue,
-            libraryId: LOCAL_LIBRARY_ID,
-            source: "local",
-            scopes: v.scopes ? [...v.scopes] : [],
-          });
-        }
+      if (!v) continue;
+      const modeId = col.modes[0].modeId;
+      const rawValue = v.valuesByMode[modeId];
+      const scopes = v.scopes ? [...v.scopes] : [];
+
+      if (v.resolvedType === "FLOAT" && typeof rawValue === "number") {
+        tokens.push({
+          variableId: v.id, name: v.name, value: rawValue,
+          color: null, tokenType: "float",
+          libraryId: LOCAL_LIBRARY_ID, source: "local", scopes,
+        });
+      } else if (v.resolvedType === "COLOR" && isRgb(rawValue)) {
+        const a = typeof (rawValue as any).a === "number" ? (rawValue as any).a : 1;
+        tokens.push({
+          variableId: v.id, name: v.name, value: 0,
+          color: { r: rawValue.r, g: rawValue.g, b: rawValue.b, a },
+          tokenType: "color",
+          libraryId: LOCAL_LIBRARY_ID, source: "local", scopes,
+        });
       }
     }
   }
@@ -311,8 +471,8 @@ async function getTeamLibraries(): Promise<{
       console.log("[Move It] Collection:", lc.name, "from", lc.libraryName);
       const vars =
         await figma.teamLibrary.getVariablesInLibraryCollectionAsync(lc.key);
-      const floatVars = vars.filter((v) => v.resolvedType === "FLOAT");
-      console.log("[Move It]  -> FLOAT:", floatVars.length, "/ total:", vars.length);
+      const usableVars = vars.filter((v) => v.resolvedType === "FLOAT" || v.resolvedType === "COLOR");
+      console.log("[Move It]  -> usable:", usableVars.length, "/ total:", vars.length);
 
       const libId = lc.libraryName;
       let entry = byLibrary.get(libId);
@@ -320,12 +480,12 @@ async function getTeamLibraries(): Promise<{
         entry = { name: lc.libraryName, floatCount: 0, collectionKeys: [], refs: [] };
         byLibrary.set(libId, entry);
       }
-      entry.floatCount += floatVars.length;
+      entry.floatCount += usableVars.length;
       entry.collectionKeys.push(lc.key);
-      for (const fv of floatVars) {
+      for (const uv of usableVars) {
         entry.refs.push({
-          key: fv.key,
-          resolvedType: fv.resolvedType,
+          key: uv.key,
+          resolvedType: uv.resolvedType,
           collectionKey: lc.key,
           libraryId: libId,
         });
@@ -400,17 +560,27 @@ async function importLibraryTokens(
           if (!col) return null;
           const modeId = col.modes[0].modeId;
           const val = variable.valuesByMode[modeId];
-          if (typeof val !== "number") return null;
-          return {
-            variableId: variable.id,
-            variableKey: ref.key,
-            name: variable.name,
-            value: val,
-            libraryId,
-            collectionKey: ref.collectionKey,
-            source: "library" as const,
-            scopes: variable.scopes ? [...variable.scopes] : [],
-          };
+          const scopes = variable.scopes ? [...variable.scopes] : [];
+
+          if (typeof val === "number") {
+            return {
+              variableId: variable.id, variableKey: ref.key,
+              name: variable.name, value: val, color: null, tokenType: "float" as const,
+              libraryId, collectionKey: ref.collectionKey,
+              source: "library" as const, scopes,
+            };
+          } else if (isRgb(val)) {
+            const a = typeof (val as any).a === "number" ? (val as any).a : 1;
+            return {
+              variableId: variable.id, variableKey: ref.key,
+              name: variable.name, value: 0,
+              color: { r: val.r, g: val.g, b: val.b, a },
+              tokenType: "color" as const,
+              libraryId, collectionKey: ref.collectionKey,
+              source: "library" as const, scopes,
+            };
+          }
+          return null;
         } catch {
           return null;
         }
@@ -477,13 +647,23 @@ function scopeMatchesCategory(scopes: string[], category: Category): boolean {
       return scopes.includes("GAP");
     case "radius":
       return scopes.includes("CORNER_RADIUS");
+    case "fill":
+      return scopes.includes("ALL_FILLS") || scopes.includes("FRAME_FILL") || scopes.includes("SHAPE_FILL");
+    case "text-fill":
+      return scopes.includes("ALL_FILLS") || scopes.includes("TEXT_FILL");
+    case "stroke":
+      return scopes.includes("STROKE_COLOR");
+    case "font-size":
+      return scopes.includes("FONT_SIZE");
+    case "font-weight":
+      return scopes.includes("FONT_WEIGHT");
+    case "line-height":
+      return scopes.includes("LINE_HEIGHT");
     default:
       return false;
   }
 }
 
-// Strict scope check for fallback — ignores ALL_SCOPES so only tokens with
-// an explicit category-specific scope (GAP, CORNER_RADIUS) qualify.
 function scopeStrictMatchesCategory(scopes: string[], category: Category): boolean {
   switch (category) {
     case "padding-h":
@@ -492,9 +672,88 @@ function scopeStrictMatchesCategory(scopes: string[], category: Category): boole
       return scopes.includes("GAP");
     case "radius":
       return scopes.includes("CORNER_RADIUS");
+    case "fill":
+      return scopes.includes("ALL_FILLS") || scopes.includes("FRAME_FILL") || scopes.includes("SHAPE_FILL");
+    case "text-fill":
+      return scopes.includes("ALL_FILLS") || scopes.includes("TEXT_FILL");
+    case "stroke":
+      return scopes.includes("STROKE_COLOR");
+    case "font-size":
+      return scopes.includes("FONT_SIZE");
+    case "font-weight":
+      return scopes.includes("FONT_WEIGHT");
+    case "line-height":
+      return scopes.includes("LINE_HEIGHT");
     default:
       return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Color matching helpers
+// ---------------------------------------------------------------------------
+
+const COLOR_EPSILON = 0.02;
+
+function colorDistance(a: ColorValue, b: ColorValue): number {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+function colorsMatch(a: ColorValue, b: ColorValue): boolean {
+  return Math.abs(a.r - b.r) < COLOR_EPSILON &&
+         Math.abs(a.g - b.g) < COLOR_EPSILON &&
+         Math.abs(a.b - b.b) < COLOR_EPSILON;
+}
+
+function classifyColorAlternative(
+  token: TokenInfo,
+  targetColor: ColorValue,
+  category: Category
+): { tier: MatchTier; difference: number; score: number } | null {
+  if (isExcludedToken(token.name)) return null;
+  if (token.tokenType !== "color" || !token.color) return null;
+
+  const dist = colorDistance(targetColor, token.color);
+  const isExact = colorsMatch(targetColor, token.color);
+  if (!isExact) return null;
+
+  const nameMatches = tokenNameMatchesCategory(token.name, category);
+  const nameScore = tokenNameRelevanceScore(token.name, category);
+  const scopeMatches = scopeMatchesCategory(token.scopes, category);
+
+  const tier: MatchTier = nameMatches ? "recommended" : "exact-other";
+  let score = nameScore * 10 + (scopeMatches ? 5 : 0) + depthPenalty(token.name);
+
+  return { tier, difference: Math.round(dist * 1000) / 1000, score };
+}
+
+function findRankedColorTokens(
+  targetColor: ColorValue,
+  category: Category,
+  tokens: TokenInfo[]
+): TokenAlternative[] {
+  const candidates: TokenAlternative[] = [];
+
+  for (const token of tokens) {
+    const result = classifyColorAlternative(token, targetColor, category);
+    if (!result) continue;
+    candidates.push({ token, tier: result.tier, difference: result.difference, score: result.score });
+  }
+
+  const tierOrder: Record<MatchTier, number> = {
+    recommended: 0, "close-right": 1, "exact-other": 2, "close-other": 3,
+  };
+
+  candidates.sort((a, b) => {
+    const tierDiff = tierOrder[a.tier] - tierOrder[b.tier];
+    if (tierDiff !== 0) return tierDiff;
+    return b.score - a.score || a.difference - b.difference;
+  });
+
+  return candidates;
 }
 
 // Tokens whose names match these patterns are component-internal variables,
@@ -646,7 +905,12 @@ function matchIssues(
 ): IssueInfo[] {
   const libTokens = tokens.filter((t) => t.libraryId === libraryId);
   return scanResults.map((sr) => {
-    const alternatives = findRankedTokens(sr.currentValue, sr.category, libTokens);
+    let alternatives: TokenAlternative[];
+    if (sr.scanType === "color" && sr.currentColor) {
+      alternatives = findRankedColorTokens(sr.currentColor, sr.category, libTokens);
+    } else {
+      alternatives = findRankedTokens(sr.currentValue, sr.category, libTokens);
+    }
     const best = alternatives[0] || null;
     return {
       ...sr,
@@ -695,6 +959,13 @@ function autoDetectLibrary(
 // Apply — bind variables to node properties
 // ---------------------------------------------------------------------------
 
+async function resolveVariable(token: TokenInfo): Promise<Variable | null> {
+  if (token.source === "library" && token.variableKey) {
+    return figma.variables.importVariableByKeyAsync(token.variableKey);
+  }
+  return figma.variables.getVariableByIdAsync(token.variableId);
+}
+
 async function applyFixes(
   issues: IssueInfo[]
 ): Promise<{ applied: number; failed: number }> {
@@ -702,29 +973,41 @@ async function applyFixes(
   let failed = 0;
 
   for (const issue of issues) {
-    if (!issue.token) {
-      failed++;
-      continue;
-    }
+    if (!issue.token) { failed++; continue; }
     try {
       const node = await figma.getNodeByIdAsync(issue.nodeId);
       if (!node) { failed++; continue; }
+      const variable = await resolveVariable(issue.token);
+      if (!variable) { failed++; continue; }
 
-      let variable: Variable;
-      if (issue.token.source === "library" && issue.token.variableKey) {
-        variable = await figma.variables.importVariableByKeyAsync(
-          issue.token.variableKey
+      if (issue.scanType === "color" && issue.paintTarget && issue.paintIndex >= 0) {
+        // Color: use setBoundVariableForPaint
+        const paints: readonly Paint[] = (node as any)[issue.paintTarget];
+        if (!paints || issue.paintIndex >= paints.length) { failed++; continue; }
+        const paint = paints[issue.paintIndex];
+        if (!paint || paint.type !== "SOLID") { failed++; continue; }
+        const newPaint = figma.variables.setBoundVariableForPaint(
+          paint as SolidPaint, "color", variable
         );
+        const updated = [...paints];
+        updated[issue.paintIndex] = newPaint;
+        (node as any)[issue.paintTarget] = updated;
+        applied++;
+      } else if (issue.category === "font-size" || issue.category === "font-weight" || issue.category === "line-height") {
+        // Typography: use setRangeBoundVariable for text nodes
+        if (node.type === "TEXT") {
+          const tn = node as TextNode;
+          const field = issue.field as "fontSize" | "fontWeight" | "lineHeight";
+          (tn as any).setRangeBoundVariable(0, tn.characters.length, field, variable);
+        } else {
+          (node as any).setBoundVariable(issue.field as any, variable);
+        }
+        applied++;
       } else {
-        const v = await figma.variables.getVariableByIdAsync(
-          issue.token.variableId
-        );
-        if (!v) { failed++; continue; }
-        variable = v;
+        // Spacing / radius: existing path
+        (node as any).setBoundVariable(issue.field as any, variable);
+        applied++;
       }
-
-      (node as any).setBoundVariable(issue.field as any, variable);
-      applied++;
     } catch {
       failed++;
     }
